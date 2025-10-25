@@ -36,4 +36,5 @@ override.tf.json
 terraform.rc
 .terraform.lock.hcl
 
-sample_data
+sample_data/*
+!sample_data/README.md
