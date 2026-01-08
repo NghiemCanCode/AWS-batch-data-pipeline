@@ -5,22 +5,15 @@ module "data-lake-bucket" {
   bucket_tags = {
     "environment": "dev"
   }
+  folder_path = ["bronze/", "silver/", "gold/"]
 }
 
-module "dags-code-bucket" {
-  source = "../../modules/storage"
-  bucket_name = "${var.dags_bucket_name}-dev"
+module "code-bucket" {
+  source           = "../../modules/storage"
+  bucket_name      = "${var.code_bucket_name}-dev"
   versioning_state = "Enabled"
   bucket_tags = {
-    "environment": "dev"
+    "environment" : "dev"
   }
-}
-
-module "pipeline-code-bucket" {
-  source = "../../modules/storage"
-  bucket_name = "${var.pipeline_scripts_bucket_name}-dev"
-  versioning_state = "Enabled"
-  bucket_tags = {
-    "environment": "dev"
-  }
+  folder_path = ["etl/", "dags/"]
 }

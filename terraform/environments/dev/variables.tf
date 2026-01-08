@@ -8,12 +8,7 @@ variable "data_lake_bucket_name" {
   type = string
 }
 
-variable "dags_bucket_name" {
-  description = "Dags bucket name"
-  type = string
-}
-
-variable "pipeline_scripts_bucket_name" {
-  description = "ETL script bucket name"
+variable "code_bucket_name" {
+  description = "Code/script bucket name"
   type = string
 }

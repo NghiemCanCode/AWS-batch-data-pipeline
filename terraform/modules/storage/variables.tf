@@ -14,3 +14,8 @@ variable "versioning_state" {
   type = string
   default = "Disabled"
 }
+
+variable "folder_path" {
+  description = "Folder path"
+  type = list(string)
+}
