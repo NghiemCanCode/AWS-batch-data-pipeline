@@ -1,4 +1,5 @@
 .env
+.venv/
 ### Terraform ###
 # Local .terraform directories
 **/.terraform/*
@@ -38,3 +39,20 @@ terraform.rc
 
 sample_data/*
 !sample_data/README.md
+
+# Pycharm .idea folder
+.idea/
+
+# VSCode .vscode folder
+.vscode/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+build/
+dist/
+*.egg-info/
+
+# Pytest
+.pytest_cache
