@@ -47,7 +47,7 @@ services:
     networks:
       - spark-network
     volumes:
-      - ./jobs:/opt/spark/jobs
+      - ./sample_data:/opt/spark/sample_data
 
 networks:
   spark-network:
