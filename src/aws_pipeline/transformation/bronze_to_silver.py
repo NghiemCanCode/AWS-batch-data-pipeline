@@ -71,7 +71,7 @@ def read_bronze_json(
     spark: "SparkSession",
     input_base_path: str,
     relative_path: str,
-) -> "DataFrame":
+    **kwargs):
 
     if not input_base_path or not relative_path:
         raise ValueError("Both 'input_base_path' and 'relative_path' must be non-empty strings.")
@@ -80,10 +80,10 @@ def read_bronze_json(
 
     logger.info("Reading bronze JSON from %s", input_path)
 
-    df = spark.read.json(input_path)
-
-    logger.info("Successfully read %d columns from %s", len(df.columns), input_path)
-    return df
+    if "multiLine" in kwargs:
+        return spark.read.option("multiLine", "true").json(input_path)
+    else:
+        return spark.read.json(input_path)
 
 def clean_currency(df, column_name):
     """Removes '$' and ',' and converts to Decimal(10,2)."""
@@ -183,6 +183,7 @@ def process_bronze_to_silver(spark, input_base_path, output_base_path):
             "output_path": "silver/mcc",
             "transform_func": transform_mcc,
             "reader_type": "json",
+            "reader_options": {"multiLine": "true"},
         },
     }
 
@@ -192,8 +193,9 @@ def process_bronze_to_silver(spark, input_base_path, output_base_path):
             logger.info("Reading %s from %s", name, input_path)
 
             # Choose the appropriate reader based on file type
+            reader_options = config.get("reader_options", {})
             if config["reader_type"] == "json":
-                raw_df = read_bronze_json(spark, input_base_path, config["input_path"])
+                raw_df = read_bronze_json(spark, input_base_path, config["input_path"], **reader_options)
             else:
                 raw_df = read_bronze_csv(spark, input_base_path, config["input_path"])
 
