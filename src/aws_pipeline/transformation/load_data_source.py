@@ -1,3 +1,7 @@
+import logging
+
+logger = logging.getLogger(__name__)
+
 def read_bronze_csv(
     spark: "SparkSession",
     input_base_path: str,
