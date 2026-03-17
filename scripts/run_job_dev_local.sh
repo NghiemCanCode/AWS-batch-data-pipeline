@@ -1,8 +1,11 @@
+#!/bin/bash
+
 docker exec -i spark-master bash -c "
 cd /opt/spark/
 
 export INPUT_PATH=/opt/spark/sample_data
 export OUTPUT_PATH=/opt/spark/sample_data
+export QUARANTINE_PATH=/opt/spark/sample_data
 
 /opt/spark/bin/spark-submit \
   --master spark://spark-master:7077 \
