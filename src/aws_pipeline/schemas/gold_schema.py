@@ -2,7 +2,7 @@ from pyspark.sql.types import (
     StructType, 
     StructField, 
     StringType, 
-    TimestampType, 
+    TimestampNTZType,
     DecimalType, 
     IntegerType, 
     DoubleType,
@@ -23,11 +23,11 @@ TIMEZONE_POLICY = "UTC"
 
 # --- System Audit Columns ---
 SYSTEM_AUDIT_COLUMNS = [
-    StructField("_created_at", TimestampType(), False), # UTC
+    StructField("_created_at", TimestampNTZType(), False), # UTC
     StructField("_source_file", StringType(), True),
     StructField("_processing_id", StringType(), False),
-    StructField("_updated_at", TimestampType(), False), # UTC
-    StructField("_batch_logical_date", TimestampType(), False), # UTC
+    StructField("_updated_at", TimestampNTZType(), False), # UTC
+    StructField("_batch_logical_date", TimestampNTZType(), False), # UTC
     StructField("_is_deleted", BooleanType(), True)
 ]
 
@@ -74,15 +74,17 @@ CustomerDimensionSchema = StructType([
     StructField("customer_key", StringType(), False),
     # -- Dimension Attributes
     StructField("customer_id", StringType(), False), # [PII] Natural Key from Source
-    # StructField("retirement_age", ShortType(), True), -> Will be in BI Redshift's view
+    # StructField("retirement_age", ShortType(), True), Will be in BI Redshift's view
+
+    # -- ML usecase, Will be limit BI Redshift's view
     StructField("birth_month", ShortType(), True),    # [SENSITIVE] Quasi-identifier
     StructField("birth_year", ShortType(), True),     # [SENSITIVE] Quasi-identifier
     StructField("gender", StringType(), True),         # [SENSITIVE] Quasi-identifier
     StructField("income_bracket", StringType(), True), # [SENSITIVE] Financial profiling
     StructField("address_key", StringType(), True), # Use location dimension as role-playing dimension
     # -- SCD Fields
-    StructField("effective_from_date", TimestampType(), False), # UTC
-    StructField("effective_to_date", TimestampType(), False),   # UTC
+    StructField("effective_from_date", TimestampNTZType(), False), # UTC
+    StructField("effective_to_date", TimestampNTZType(), False),   # UTC
     StructField("is_current", BooleanType(), False),
     StructField("version_number", ShortType(), False)   
 ] + SYSTEM_AUDIT_COLUMNS)
@@ -97,14 +99,13 @@ AccountDimensionSchema = StructType([
     StructField("mask_card_number", StringType(), False), # [PII] Masked/Obfuscated
     StructField("expires_month", ShortType(), True),
     StructField("expires_year", ShortType(), True),
-    # -- ML usecase, Will be limit BI Redshift's view
     # -- This field meant this card has a CVV, not a null value
     StructField("has_a_cvv", BooleanType(), True), 
     StructField("has_chip", BooleanType(), True), # -> ML usecase, Will be limit BI Redshift's view
     StructField("num_card_issue", ShortType(), True), # -> ML usecase, Will be limit BI Redshift's view
     # -- SCD Fields
-    StructField("effective_from_date", TimestampType(), False),
-    StructField("effective_to_date", TimestampType(), False),
+    StructField("effective_from_date", TimestampNTZType(), False),
+    StructField("effective_to_date", TimestampNTZType(), False),
     StructField("is_current", BooleanType(), False),
     StructField("version_number", ShortType(), False),
 ] + SYSTEM_AUDIT_COLUMNS)
@@ -202,7 +203,7 @@ TemporalTrendFactSchema = StructType([
 AccountOwnerFactlessSchema = StructType([
     StructField("customer_key", StringType(), False), 
     StructField("account_key", StringType(), False),
-    StructField("valid_from_date", TimestampType(), False),
-    StructField("valid_to_date", TimestampType(), False),
+    StructField("valid_from_date", TimestampNTZType(), False),
+    StructField("valid_to_date", TimestampNTZType(), False),
     StructField("is_active", BooleanType(), False),
 ] + SYSTEM_AUDIT_COLUMNS)
