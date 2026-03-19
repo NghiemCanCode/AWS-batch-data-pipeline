@@ -56,3 +56,6 @@ dist/
 
 # Pytest
 .pytest_cache
+
+
+.agent/

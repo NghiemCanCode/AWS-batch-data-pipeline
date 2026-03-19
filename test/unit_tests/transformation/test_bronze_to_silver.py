@@ -1,13 +1,32 @@
-import pytest
+"""
+Unit tests for bronze_to_silver.py
+
+Tests the Bronze-to-Silver pipeline's core components:
+  - Data quality gates (audit_mandatory_columns, audit_duplicates)
+  - Schema enforcement (schema_enforcing)
+  - Per-dataset transform logic (transactions, cards, users, mcc)
+  - System audit columns (add_audit_columns)
+"""
+
 import sys
 import os
 from decimal import Decimal
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DecimalType
+from pyspark.sql.types import (
+    StructType,
+    StructField,
+    StringType,
+    IntegerType,
+    DecimalType,
+)
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../src')))
+sys.path.append(
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../src"))
+)
 
 from aws_pipeline.transformation.bronze_to_silver import (
-    apply_schema_casting,
+    schema_enforcing,
+    audit_mandatory_columns,
+    audit_duplicates,
     transform_transactions,
     transform_cards,
     transform_users,
@@ -22,33 +41,160 @@ from aws_pipeline.schemas.silver_schema import (
 )
 
 
-# ──────────────────────────────────────────────
-# Helper: build a sample DataFrame for a schema
-# ──────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def _string_schema(columns):
-    """Create an all-StringType StructType (mimics raw CSV read)."""
+    """All-StringType StructType — mimics raw CSV read where every column is a string."""
     return StructType([StructField(c, StringType(), True) for c in columns])
 
 
 # ──────────────────────────────────────────────
-# apply_schema_casting
+# audit_mandatory_columns
 # ──────────────────────────────────────────────
 
-class TestApplySchemaCasting:
 
-    def test_basic_casting(self, spark):
-        """Columns are cast to target types correctly."""
+class TestAuditMandatoryColumns:
+    """Contract: rows with NULL in any mandatory column go to quarantine.
+    This is the first data quality gate — must never let NULL keys into Silver.
+    """
+
+    def test_all_rows_clean_when_no_nulls(self, spark):
+        data = [("1", "Alice"), ("2", "Bob")]
+        df = spark.createDataFrame(data, ["id", "name"])
+
+        clean, corrupted = audit_mandatory_columns(df, ["id", "name"], "test")
+
+        assert clean.count() == 2
+        assert corrupted.count() == 0
+
+    def test_null_mandatory_col_routes_to_quarantine(self, spark):
+        data = [("1", "Alice"), (None, "Bob"), ("3", None)]
+        df = spark.createDataFrame(data, ["id", "name"])
+
+        clean, corrupted = audit_mandatory_columns(df, ["id", "name"], "test")
+
+        assert clean.count() == 1
+        assert corrupted.count() == 2
+
+    def test_quarantine_metadata_columns_present(self, spark):
+        data = [(None, "Alice")]
+        schema = StructType([StructField("id", StringType(), True), StructField("name", StringType(), True)])
+        df = spark.createDataFrame(data, schema)
+
+        _, corrupted = audit_mandatory_columns(df, ["id"], "transactions")
+
+        for col in [
+            "_quarantine_source",
+            "_quarantine_reason",
+            "_quarantine_null_cols",
+            "_quarantine_ts",
+        ]:
+            assert col in corrupted.columns, f"Missing quarantine column: {col}"
+
+    def test_quarantine_reason_and_source_correct(self, spark):
+        data = [(None, "Alice")]
+        schema = StructType([StructField("id", StringType(), True), StructField("name", StringType(), True)])
+        df = spark.createDataFrame(data, schema)
+
+        _, corrupted = audit_mandatory_columns(df, ["id"], "transactions")
+        row = corrupted.collect()[0]
+
+        assert row["_quarantine_source"] == "transactions"
+        assert row["_quarantine_reason"] == "null_mandatory_column"
+
+    def test_clean_rows_preserve_original_data(self, spark):
+        data = [("1", "Alice"), (None, "Bob")]
+        df = spark.createDataFrame(data, ["id", "name"])
+
+        clean, _ = audit_mandatory_columns(df, ["id"], "test")
+        row = clean.collect()[0]
+
+        assert row["id"] == "1"
+        assert row["name"] == "Alice"
+
+
+# ──────────────────────────────────────────────
+# audit_duplicates
+# ──────────────────────────────────────────────
+
+
+class TestAuditDuplicates:
+    """Contract: keeps only the latest record per id (by timestamp desc).
+    Protects against source re-sends and ensures SCD correctness for upsert datasets.
+    """
+
+    def test_no_duplicates_all_rows_pass(self, spark):
+        data = [("1", "2023-01-01"), ("2", "2023-01-02")]
+        df = spark.createDataFrame(data, ["id", "ts"])
+
+        clean, quarantine = audit_duplicates(df, "id", "ts", "test")
+
+        assert clean.count() == 2
+        assert quarantine.count() == 0
+
+    def test_keeps_latest_by_timestamp(self, spark):
+        data = [
+            ("1", "2023-01-01"),
+            ("1", "2023-06-15"),
+            ("1", "2023-03-10"),
+        ]
+        df = spark.createDataFrame(data, ["id", "ts"])
+
+        clean, quarantine = audit_duplicates(df, "id", "ts", "test")
+
+        assert clean.count() == 1
+        assert quarantine.count() == 2
+        assert clean.collect()[0]["ts"] == "2023-06-15"
+
+    def test_quarantine_metadata_correct(self, spark):
+        data = [("1", "2023-01-01"), ("1", "2023-06-15")]
+        df = spark.createDataFrame(data, ["id", "ts"])
+
+        _, quarantine = audit_duplicates(df, "id", "ts", "cards")
+        row = quarantine.collect()[0]
+
+        assert row["_quarantine_source"] == "cards"
+        assert row["_quarantine_reason"] == "duplicate"
+
+    def test_multiple_ids_deduped_independently(self, spark):
+        data = [
+            ("1", "2023-01-01"),
+            ("1", "2023-06-15"),
+            ("2", "2023-02-01"),
+            ("2", "2023-09-01"),
+        ]
+        df = spark.createDataFrame(data, ["id", "ts"])
+
+        clean, quarantine = audit_duplicates(df, "id", "ts", "test")
+
+        assert clean.count() == 2
+        assert quarantine.count() == 2
+
+
+# ──────────────────────────────────────────────
+# schema_enforcing
+# ──────────────────────────────────────────────
+
+
+class TestSchemaEnforcing:
+    """Contract: output schema matches target exactly — correct types, correct columns,
+    correct order. This is the last defense before writing to Silver.
+    """
+
+    def test_casts_columns_to_target_types(self, spark):
         data = [("1", "10.5", "100")]
         df = spark.createDataFrame(data, ["id", "amount", "count"])
 
-        target = StructType([
-            StructField("id", IntegerType(), True),
-            StructField("amount", DecimalType(10, 2), True),
-            StructField("count", IntegerType(), True),
-        ])
+        target = StructType(
+            [
+                StructField("id", IntegerType(), True),
+                StructField("amount", DecimalType(18, 2), True),
+                StructField("count", IntegerType(), True),
+            ]
+        )
 
-        result = apply_schema_casting(df, target)
+        result = schema_enforcing(df, target)
 
         assert result.schema == target
         row = result.collect()[0]
@@ -57,35 +203,48 @@ class TestApplySchemaCasting:
         assert row["count"] == 100
 
     def test_missing_column_filled_with_null(self, spark):
-        """Columns absent from input are added as NULL with the correct type."""
         data = [("1",)]
         df = spark.createDataFrame(data, ["id"])
 
-        target = StructType([
-            StructField("id", IntegerType(), True),
-            StructField("amount", DecimalType(10, 2), True),
-        ])
+        target = StructType(
+            [
+                StructField("id", IntegerType(), True),
+                StructField("amount", DecimalType(18, 2), True),
+            ]
+        )
 
-        result = apply_schema_casting(df, target)
+        result = schema_enforcing(df, target)
 
-        assert "amount" in result.columns
         row = result.collect()[0]
         assert row["id"] == 1
         assert row["amount"] is None
 
-    def test_only_selects_schema_columns(self, spark):
-        """Extra columns NOT in the target schema are dropped."""
+    def test_extra_columns_dropped(self, spark):
         data = [("1", "extra_value")]
         df = spark.createDataFrame(data, ["id", "extra_col"])
 
-        target = StructType([
-            StructField("id", IntegerType(), True),
-        ])
+        target = StructType([StructField("id", IntegerType(), True)])
 
-        result = apply_schema_casting(df, target)
+        result = schema_enforcing(df, target)
 
         assert result.columns == ["id"]
         assert "extra_col" not in result.columns
+
+    def test_output_column_order_matches_target_schema(self, spark):
+        """Column order must match target — wrong order breaks downstream joins and writes."""
+        data = [("hello", "1")]
+        df = spark.createDataFrame(data, ["name", "id"])
+
+        target = StructType(
+            [
+                StructField("id", IntegerType(), True),
+                StructField("name", StringType(), True),
+            ]
+        )
+
+        result = schema_enforcing(df, target)
+
+        assert result.columns == ["id", "name"]
 
 
 # ──────────────────────────────────────────────
@@ -93,51 +252,78 @@ class TestApplySchemaCasting:
 # ──────────────────────────────────────────────
 
 TRANSACTIONS_COLS = [
-    "id", "date", "client_id", "card_id", "amount", "use_chip",
-    "merchant_id", "merchant_city", "merchant_state", "zip", "mcc", "errors"
+    "id",
+    "date",
+    "client_id",
+    "card_id",
+    "amount",
+    "use_chip",
+    "merchant_id",
+    "merchant_city",
+    "merchant_state",
+    "zip",
+    "mcc",
+    "errors",
 ]
 
 
 class TestTransformTransactions:
+    def _make_df(self, spark, overrides=None):
+        base = {
+            "id": "1",
+            "date": "2023-10-27 10:00:00",
+            "client_id": "100",
+            "card_id": "200",
+            "amount": "$50.00",
+            "use_chip": "Chip Transaction",
+            "merchant_id": "500",
+            "merchant_city": "  City  ",
+            "merchant_state": "  ca  ",
+            "zip": "12345",
+            "mcc": "1234",
+            "errors": "",
+        }
+        if overrides:
+            base.update(overrides)
+        row = tuple(base[c] for c in TRANSACTIONS_COLS)
+        return spark.createDataFrame([row], _string_schema(TRANSACTIONS_COLS))
 
-    def test_partition_columns_added(self, spark):
-        """year, month, day columns are derived from date."""
-        data = [("1", "2023-10-27 10:00:00", "100", "200", "$50.00",
-                 "Chip", "500", "City", "State", "12345", "1234", "")]
-        df = spark.createDataFrame(data, _string_schema(TRANSACTIONS_COLS))
+    def test_id_renamed_to_transaction_id(self, spark):
+        result = transform_transactions(self._make_df(spark))
 
-        result = transform_transactions(df)
+        assert "transaction_id" in result.columns
+        assert "id" not in result.columns
 
-        assert "year" in result.columns
-        assert "month" in result.columns
-        assert "day" in result.columns
-
+    def test_partition_columns_derived_from_timestamp(self, spark):
+        result = transform_transactions(self._make_df(spark))
         row = result.collect()[0]
+
         assert row["year"] == 2023
         assert row["month"] == 10
         assert row["day"] == 27
 
-    def test_amount_cleaned(self, spark):
-        """Dollar signs and commas are removed from amount before casting."""
-        data = [("1", "2023-01-01 00:00:00", "100", "200", "$1,234.56",
-                 "Chip", "500", "City", "State", "12345", "1234", "")]
-        df = spark.createDataFrame(data, _string_schema(TRANSACTIONS_COLS))
-
-        result = transform_transactions(df)
-        row = result.collect()[0]
+    def test_amount_cleaned_from_currency_format(self, spark):
+        df = self._make_df(spark, {"amount": "$1,234.56"})
+        row = transform_transactions(df).collect()[0]
 
         assert row["amount"] == Decimal("1234.56")
 
-    def test_schema_matches_silver(self, spark):
-        """Output schema (excluding partition cols) matches TransactionsSilverSchema fields."""
-        data = [("1", "2023-01-01 00:00:00", "100", "200", "$50.00",
-                 "Chip", "500", "City", "State", "12345", "1234", "")]
-        df = spark.createDataFrame(data, _string_schema(TRANSACTIONS_COLS))
+    def test_is_error_true_when_errors_present(self, spark):
+        df = self._make_df(spark, {"errors": "Bad CVV,Technical Glitch"})
+        row = transform_transactions(df).collect()[0]
 
-        result = transform_transactions(df)
+        assert row["is_error"] is True
+
+    def test_is_error_false_when_no_errors(self, spark):
+        df = self._make_df(spark, {"errors": ""})
+        row = transform_transactions(df).collect()[0]
+
+        assert row["is_error"] is False
+
+    def test_output_contains_all_silver_schema_fields(self, spark):
+        result = transform_transactions(self._make_df(spark))
         result_fields = {f.name for f in result.schema.fields}
 
-        # All TransactionsSilverSchema fields should be present
         for field in TransactionsSilverSchema.fields:
             assert field.name in result_fields, f"Missing: {field.name}"
 
@@ -147,53 +333,69 @@ class TestTransformTransactions:
 # ──────────────────────────────────────────────
 
 CARDS_COLS = [
-    "id", "client_id", "card_brand", "card_type", "card_number", "expires",
-    "cvv", "has_chip", "num_cards_issued", "credit_limit", "acct_open_date",
-    "year_pin_last_changed", "card_on_dark_web"
+    "id",
+    "client_id",
+    "card_brand",
+    "card_type",
+    "card_number",
+    "expires",
+    "cvv",
+    "use_chip",
+    "num_cards_issued",
+    "credit_limit",
+    "acct_open_date",
+    "year_pin_last_changed",
+    "card_on_dark_web",
 ]
 
 
 class TestTransformCards:
+    def _make_df(self, spark, overrides=None):
+        base = {
+            "id": "1",
+            "client_id": "101",
+            "card_brand": "Visa",
+            "card_type": "Credit",
+            "card_number": "1234567890",
+            "expires": "12/25",
+            "cvv": "123",
+            "use_chip": "TRUE",
+            "num_cards_issued": "1",
+            "credit_limit": "$5,000.00",
+            "acct_open_date": "01/20",
+            "year_pin_last_changed": "2023",
+            "card_on_dark_web": "FALSE",
+        }
+        if overrides:
+            base.update(overrides)
+        row = tuple(base[c] for c in CARDS_COLS)
+        return spark.createDataFrame([row], _string_schema(CARDS_COLS))
+
+    def test_id_renamed_to_card_id(self, spark):
+        result = transform_cards(self._make_df(spark))
+
+        assert "card_id" in result.columns
+        assert "id" not in result.columns
 
     def test_credit_limit_cleaned_and_cast(self, spark):
-        data = [("1", "101", "Visa", "Credit", "1234567890", "12/25",
-                 "123", "Yes", "1", "$5,000.00", "2020-01-01", "2023", "No")]
-        df = spark.createDataFrame(data, _string_schema(CARDS_COLS))
-
-        result = transform_cards(df)
-        row = result.collect()[0]
+        row = transform_cards(self._make_df(spark)).collect()[0]
 
         assert row["credit_limit"] == Decimal("5000.00")
 
     def test_card_number_is_masked(self, spark):
-        data = [("1", "101", "Visa", "Credit", "1234567890", "12/25",
-                 "123", "Yes", "1", "$5,000.00", "2020-01-01", "2023", "No")]
-        df = spark.createDataFrame(data, _string_schema(CARDS_COLS))
+        row = transform_cards(self._make_df(spark)).collect()[0]
 
-        result = transform_cards(df)
-        row = result.collect()[0]
-
-        # 10-digit card → 6 asterisks + last 4
-        assert row["card_number"] == "******7890"
+        assert row["mask_card_number"] == "******7890"
 
     def test_schema_types(self, spark):
-        data = [("1", "101", "Visa", "Credit", "1234567890", "12/25",
-                 "123", "Yes", "1", "$5,000.00", "2020-01-01", "2023", "No")]
-        df = spark.createDataFrame(data, _string_schema(CARDS_COLS))
+        dtypes = dict(transform_cards(self._make_df(spark)).dtypes)
 
-        result = transform_cards(df)
-        dtypes = dict(result.dtypes)
-
-        assert dtypes["credit_limit"] == "decimal(10,2)"
+        assert dtypes["credit_limit"] == "decimal(18,2)"
         assert dtypes["num_cards_issued"] == "int"
         assert dtypes["year_pin_last_changed"] == "int"
 
-    def test_schema_matches_silver(self, spark):
-        data = [("1", "101", "Visa", "Credit", "1234567890", "12/25",
-                 "123", "Yes", "1", "$5,000.00", "2020-01-01", "2023", "No")]
-        df = spark.createDataFrame(data, _string_schema(CARDS_COLS))
-
-        result = transform_cards(df)
+    def test_output_contains_all_silver_schema_fields(self, spark):
+        result = transform_cards(self._make_df(spark))
         result_fields = {f.name for f in result.schema.fields}
 
         for field in CardsSilverSchema.fields:
@@ -205,45 +407,76 @@ class TestTransformCards:
 # ──────────────────────────────────────────────
 
 USERS_COLS = [
-    "id", "current_age", "retirement_age", "birth_year", "birth_month",
-    "gender", "address", "latitude", "longitude", "per_capita_income",
-    "yearly_income", "total_debt", "credit_score", "num_credit_cards"
+    "id",
+    "current_age",
+    "retirement_age",
+    "birth_year",
+    "birth_month",
+    "gender",
+    "address",
+    "latitude",
+    "longitude",
+    "per_capita_income",
+    "yearly_income",
+    "total_debt",
+    "credit_score",
+    "num_credit_cards",
 ]
 
 
 class TestTransformUsers:
+    def _make_df(self, spark, overrides=None):
+        base = {
+            "id": "1",
+            "current_age": "30",
+            "retirement_age": "65",
+            "birth_year": "1990",
+            "birth_month": "5",
+            "gender": "Male",
+            "address": "123 Main St",
+            "latitude": "10.0",
+            "longitude": "20.0",
+            "per_capita_income": "$50,000.00",
+            "yearly_income": "$100,000.00",
+            "total_debt": "$0.00",
+            "credit_score": "70",
+            "num_credit_cards": "2",
+        }
+        if overrides:
+            base.update(overrides)
+        row = tuple(base[c] for c in USERS_COLS)
+        return spark.createDataFrame([row], _string_schema(USERS_COLS))
+
+    def test_id_renamed_to_user_id(self, spark):
+        result = transform_users(self._make_df(spark))
+
+        assert "user_id" in result.columns
+        assert "id" not in result.columns
 
     def test_currency_columns_cleaned(self, spark):
-        data = [("1", "30", "65", "1990", "5", "Male", "123 St",
-                 "10.0", "20.0", "$50,000.00", "$100,000.00", "$0.00", "700", "2")]
-        df = spark.createDataFrame(data, _string_schema(USERS_COLS))
-
-        result = transform_users(df)
-        row = result.collect()[0]
+        row = transform_users(self._make_df(spark)).collect()[0]
 
         assert row["per_capita_income"] == Decimal("50000.00")
         assert row["yearly_income"] == Decimal("100000.00")
         assert row["total_debt"] == Decimal("0.00")
 
-    def test_integer_casting(self, spark):
-        data = [("1", "30", "65", "1990", "5", "Male", "123 St",
-                 "10.0", "20.0", "$50,000.00", "$100,000.00", "$0.00", "700", "2")]
-        df = spark.createDataFrame(data, _string_schema(USERS_COLS))
+    def test_dropped_columns_not_in_output(self, spark):
+        """current_age, latitude, longitude are explicitly dropped — not relevant for Silver."""
+        result = transform_users(self._make_df(spark))
 
-        result = transform_users(df)
-        dtypes = dict(result.dtypes)
+        for col in ["current_age", "latitude", "longitude"]:
+            assert col not in result.columns, f"Should be dropped: {col}"
 
-        assert dtypes["current_age"] == "int"
+    def test_integer_types(self, spark):
+        dtypes = dict(transform_users(self._make_df(spark)).dtypes)
+
         assert dtypes["retirement_age"] == "int"
         assert dtypes["birth_year"] == "int"
+        assert dtypes["birth_month"] == "int"
         assert dtypes["credit_score"] == "int"
 
-    def test_schema_matches_silver(self, spark):
-        data = [("1", "30", "65", "1990", "5", "Male", "123 St",
-                 "10.0", "20.0", "$50,000.00", "$100,000.00", "$0.00", "700", "2")]
-        df = spark.createDataFrame(data, _string_schema(USERS_COLS))
-
-        result = transform_users(df)
+    def test_output_contains_all_silver_schema_fields(self, spark):
+        result = transform_users(self._make_df(spark))
         result_fields = {f.name for f in result.schema.fields}
 
         for field in UsersSilverSchema.fields:
@@ -254,43 +487,32 @@ class TestTransformUsers:
 # transform_mcc
 # ──────────────────────────────────────────────
 
-class TestTransformMcc:
 
+class TestTransformMcc:
     def test_unpivots_columns_to_rows(self, spark):
-        """Each column becomes a row with (mcc_code, merchant_name)."""
+        """Each JSON key becomes a row: (mcc_code, merchant_name)."""
         data = [("Eating Places", "Service Stations")]
-        schema = StructType([
-            StructField("5812", StringType(), True),
-            StructField("5541", StringType(), True),
-        ])
+        schema = StructType(
+            [
+                StructField("5812", StringType(), True),
+                StructField("5541", StringType(), True),
+            ]
+        )
         df = spark.createDataFrame(data, schema)
 
-        result = transform_mcc(df)
-        rows = result.collect()
+        rows = transform_mcc(df).collect()
+        lookup = {r["mcc_code"]: r["merchant_name"] for r in rows}
 
         assert len(rows) == 2
-
-        lookup = {row["mcc_code"]: row["merchant_name"] for row in rows}
         assert lookup["5812"] == "Eating Places"
         assert lookup["5541"] == "Service Stations"
 
-    def test_output_has_correct_columns(self, spark):
+    def test_output_contains_all_silver_schema_fields(self, spark):
         data = [("Eating Places",)]
         schema = StructType([StructField("5812", StringType(), True)])
         df = spark.createDataFrame(data, schema)
 
-        result = transform_mcc(df)
-
-        assert "mcc_code" in result.columns
-        assert "merchant_name" in result.columns
-
-    def test_schema_matches_silver(self, spark):
-        data = [("Eating Places",)]
-        schema = StructType([StructField("5812", StringType(), True)])
-        df = spark.createDataFrame(data, schema)
-
-        result = transform_mcc(df)
-        result_fields = {f.name for f in result.schema.fields}
+        result_fields = {f.name for f in transform_mcc(df).schema.fields}
 
         for field in MccSilverSchema.fields:
             assert field.name in result_fields, f"Missing: {field.name}"
@@ -300,50 +522,56 @@ class TestTransformMcc:
 # add_audit_columns
 # ──────────────────────────────────────────────
 
+
 class TestAddAuditColumns:
+    """Contract: adds exactly 6 system audit columns required by Silver schema."""
 
-    def test_adds_three_audit_columns(self, spark):
-        data = [("1",)]
-        schema = StructType([StructField("id", StringType(), True)])
-        df = spark.createDataFrame(data, schema)
+    EXPECTED_AUDIT_COLS = [
+        "_created_at",
+        "_source_file",
+        "_processing_id",
+        "_updated_at",
+        "_batch_logical_date",
+        "_is_deleted",
+    ]
 
+    def test_adds_all_six_audit_columns(self, spark):
+        df = spark.createDataFrame([("1",)], ["id"])
         result = add_audit_columns(df)
 
-        assert "_ingested_at" in result.columns
-        assert "_source_file" in result.columns
-        assert "_processing_id" in result.columns
+        for col in self.EXPECTED_AUDIT_COLS:
+            assert col in result.columns, f"Missing audit column: {col}"
 
     def test_original_columns_preserved(self, spark):
-        data = [("1", "hello")]
-        schema = StructType([
-            StructField("id", StringType(), True),
-            StructField("name", StringType(), True),
-        ])
-        df = spark.createDataFrame(data, schema)
-
+        schema = StructType(
+            [
+                StructField("id", StringType(), True),
+                StructField("name", StringType(), True),
+            ]
+        )
+        df = spark.createDataFrame([("1", "hello")], schema)
         result = add_audit_columns(df)
 
         assert "id" in result.columns
         assert "name" in result.columns
-        # Total = 2 original + 3 audit = 5
-        assert len(result.columns) == 5
+        assert len(result.columns) == 2 + len(self.EXPECTED_AUDIT_COLS)
 
-    def test_ingested_at_is_not_null(self, spark):
-        data = [("1",)]
-        schema = StructType([StructField("id", StringType(), True)])
-        df = spark.createDataFrame(data, schema)
+    def test_timestamps_are_not_null(self, spark):
+        df = spark.createDataFrame([("1",)], ["id"])
+        row = add_audit_columns(df).collect()[0]
 
-        result = add_audit_columns(df)
-        row = result.collect()[0]
-
-        assert row["_ingested_at"] is not None
+        assert row["_created_at"] is not None
+        assert row["_updated_at"] is not None
+        assert row["_batch_logical_date"] is not None
 
     def test_processing_id_is_not_null(self, spark):
-        data = [("1",)]
-        schema = StructType([StructField("id", StringType(), True)])
-        df = spark.createDataFrame(data, schema)
-
-        result = add_audit_columns(df)
-        row = result.collect()[0]
+        df = spark.createDataFrame([("1",)], ["id"])
+        row = add_audit_columns(df).collect()[0]
 
         assert row["_processing_id"] is not None
+
+    def test_is_deleted_defaults_to_false(self, spark):
+        df = spark.createDataFrame([("1",)], ["id"])
+        row = add_audit_columns(df).collect()[0]
+
+        assert row["_is_deleted"] is False

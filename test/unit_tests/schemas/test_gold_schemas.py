@@ -1,10 +1,9 @@
-import pytest
 import sys
 import os
 from pyspark.sql.types import (
-    StructType, StructField, StringType, TimestampType,
+    StructType, StringType, TimestampNTZType,
     DecimalType, IntegerType, DoubleType, DateType,
-    BooleanType, ShortType, LongType, FloatType
+    BooleanType, ShortType, FloatType
 )
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../src')))
@@ -102,11 +101,11 @@ class TestSystemAuditColumns:
 
     def test_field_types(self):
         type_map = {f.name: f.dataType for f in SYSTEM_AUDIT_COLUMNS}
-        assert isinstance(type_map["_created_at"], TimestampType)
+        assert isinstance(type_map["_created_at"], TimestampNTZType)
         assert isinstance(type_map["_source_file"], StringType)
         assert isinstance(type_map["_processing_id"], StringType)
-        assert isinstance(type_map["_updated_at"], TimestampType)
-        assert isinstance(type_map["_batch_logical_date"], TimestampType)
+        assert isinstance(type_map["_updated_at"], TimestampNTZType)
+        assert isinstance(type_map["_batch_logical_date"], TimestampNTZType)
         assert isinstance(type_map["_is_deleted"], BooleanType)
 
     def test_nullable_expectations(self):
@@ -177,7 +176,7 @@ class TestDateDimensionSchema:
         assert fm["date_key"].nullable is False
 
     def test_full_date_is_date_type(self):
-        """full_date must be DateType, not TimestampType or StringType."""
+        """full_date must be DateType, not TimestampNTZType or StringType."""
         tm = _type_map(DateDimensionSchema)
         assert isinstance(tm["full_date"], DateType)
 
@@ -313,8 +312,8 @@ class TestCustomerDimensionSchema:
 
     def test_scd2_field_types(self):
         tm = _type_map(CustomerDimensionSchema)
-        assert isinstance(tm["effective_from_date"], TimestampType)
-        assert isinstance(tm["effective_to_date"], TimestampType)
+        assert isinstance(tm["effective_from_date"], TimestampNTZType)
+        assert isinstance(tm["effective_to_date"], TimestampNTZType)
         assert isinstance(tm["is_current"], BooleanType)
         assert isinstance(tm["version_number"], ShortType)
 
@@ -878,8 +877,8 @@ class TestAccountOwnerFactlessSchema:
 
     def test_temporal_fields(self):
         tm = _type_map(AccountOwnerFactlessSchema)
-        assert isinstance(tm["valid_from_date"], TimestampType)
-        assert isinstance(tm["valid_to_date"], TimestampType)
+        assert isinstance(tm["valid_from_date"], TimestampNTZType)
+        assert isinstance(tm["valid_to_date"], TimestampNTZType)
         assert isinstance(tm["is_active"], BooleanType)
 
     def test_no_duplicate_field_names(self):
