@@ -22,6 +22,7 @@ def spark():
         spark = SparkSession.builder \
             .master("local[1]") \
             .appName("PytestSparkSession") \
+            .config("spark.sql.timestampType", "TIMESTAMP_NTZ") \
             .getOrCreate()
         
     yield spark
