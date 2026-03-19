@@ -12,11 +12,11 @@ def trim_and_lower_col(column_name: str):
 
 
 def clean_timestamp_col(column_name: str):
-    return F.to_timestamp(F.trim(F.col(column_name)), "yyyy-MM-dd HH:mm:ss")
+    return F.try_to_timestamp(F.trim(F.col(column_name)), F.lit("yyyy-MM-dd HH:mm:ss"))
 
 
 def clean_currency_col(column_name: str):
-    return F.regexp_replace(F.col(column_name), r"[$,]", "").cast("decimal(18,2)")
+    return F.regexp_replace(F.col(column_name), r"[$,]", "").try_cast("decimal(18,2)")
 
 
 def clean_bool_col(column_name: str):
@@ -36,9 +36,9 @@ def clean_num_col(column_name: str, num_range: list[int] = None):
         num_1, num_2 = num_range[0], num_range[1]
         return F.when(
             cleaned_col.cast("int").between(num_1, num_2), cleaned_col.cast("int")
-        ).otherwise(F.lit(None).cast("int"))
+        ).otherwise(F.lit(None).try_cast("int"))
     else:
-        return cleaned_col.cast("int")
+        return cleaned_col.try_cast("int")
 
 
 def clean_category_col(column_name: str, category_list: list[str]):
@@ -83,7 +83,7 @@ def mask_card_num_col(column_name: str):
 
 
 def clean_expires_col(column_name: str):
-    return F.to_date(F.trim(F.col(column_name)), "MM/yy")
+    return F.try_to_date(F.trim(F.col(column_name)), "MM/yy")
 
 
 def clean_cvv_col(column_name: str):

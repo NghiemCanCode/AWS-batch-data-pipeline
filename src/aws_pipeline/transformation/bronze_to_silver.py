@@ -20,7 +20,6 @@ WRITE MODE PER DATASET
     - audit_duplicates and SCD tracking are not required.
 """
 
-from datetime import datetime
 from pyspark.errors import AnalysisException
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
@@ -98,7 +97,7 @@ def audit_mandatory_columns(
         .withColumn("_quarantine_source", F.lit(source_name))
         .withColumn("_quarantine_reason", F.lit("null_mandatory_column"))
         .withColumn("_quarantine_null_cols", null_cols_expr)
-        .withColumn("_quarantine_ts", F.lit(datetime.utcnow().isoformat()))
+        .withColumn("_quarantine_ts", F.current_timestamp())
     )
 
     clean_df.cache()
@@ -126,7 +125,7 @@ def audit_duplicates(
         duplicate_df.withColumn("_quarantine_source", F.lit(source_name))
         .withColumn("_quarantine_reason", F.lit("duplicate"))
         .withColumn("_quarantine_null_cols", F.lit(None).cast("string"))
-        .withColumn("_quarantine_ts", F.lit(datetime.utcnow().isoformat()))
+        .withColumn("_quarantine_ts", F.current_timestamp())
     )
 
     clean_df.cache()
@@ -158,7 +157,7 @@ def schema_enforcing(df: DataFrame, schema: StructType) -> DataFrame:
                 f"→ applying try_cast."
             )
             select_cols.append(
-                F.try_cast(F.col(field.name), field.dataType).alias(field.name)
+                F.col(field.name).try_cast(field.dataType).alias(field.name)
             )
 
     return df.select(select_cols)

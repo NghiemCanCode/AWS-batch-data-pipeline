@@ -2,7 +2,7 @@ from pyspark.sql.types import (
     StructType,
     StructField,
     StringType,
-    TimestampType,
+    TimestampNTZType,
     DateType,
     DecimalType,
     IntegerType,
@@ -13,17 +13,17 @@ from pyspark.sql.types import (
 TIMEZONE_POLICY = "UTC"
 
 SYSTEM_AUDIT_COLUMNS = [
-    StructField("_created_at",          TimestampType(), False),
+    StructField("_created_at",          TimestampNTZType(), False),
     StructField("_source_file",         StringType(),    True),
     StructField("_processing_id",       StringType(),    False),
-    StructField("_updated_at",          TimestampType(), False),
-    StructField("_batch_logical_date",  TimestampType(), False),
+    StructField("_updated_at",          TimestampNTZType(), False),
+    StructField("_batch_logical_date",  TimestampNTZType(), False),
     StructField("_is_deleted",          BooleanType(),   False),
 ]
 
 TransactionsSilverSchema = StructType([
     StructField("transaction_id",       StringType(),            False),
-    StructField("timestamp",            TimestampType(),         True),
+    StructField("timestamp",            TimestampNTZType(),         True),
     StructField("client_id",            StringType(),            False),
     StructField("card_id",              StringType(),            False),
     StructField("amount",               DecimalType(18, 2),      True),
