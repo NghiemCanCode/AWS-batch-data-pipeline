@@ -70,6 +70,13 @@ def clean_trans_errors_col(column_name: str):
     return F.when(F.length(clean_str) > 0, transformed).otherwise(F.lit(None))
 
 
+def clean_zip_col(column_name: str):
+    raw = F.trim(F.col(column_name))
+    return F.when(
+        raw.rlike(r"^\d+(?:\.0+)?$"), raw.cast("double").cast("int").cast("string")
+    ).otherwise(F.lit(None).cast("string"))
+
+
 # --- Card ---
 
 

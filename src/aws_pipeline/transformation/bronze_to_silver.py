@@ -40,6 +40,7 @@ from .data_transform import (
     clean_cvv_col,
     clean_bool_col,
     clean_num_col,
+    clean_zip_col,
 )
 
 try:
@@ -244,7 +245,7 @@ def transform_transactions(df: DataFrame) -> DataFrame:
         )
         .withColumn("merchant_city", trim_and_lower_col("merchant_city"))
         .withColumn("merchant_state", trim_and_upper_col("merchant_state"))
-        .withColumn("zip", F.col("zip").cast("int").cast("string"))
+        .withColumn("zip", clean_zip_col("zip"))
         .withColumn("errors", clean_trans_errors_col("errors"))
         .withColumn("is_error", F.col("errors").isNotNull())
     )
@@ -268,7 +269,7 @@ def transform_cards(df: DataFrame) -> DataFrame:
         .withColumn("mask_card_number", mask_card_num_col("card_number"))
         .withColumn("expires", clean_expires_col("expires"))
         .withColumn("has_a_cvv", clean_cvv_col("cvv"))
-        .withColumn("has_chip", clean_bool_col("use_chip"))
+        .withColumn("has_chip", clean_bool_col("has_chip"))
         .withColumn("credit_limit", clean_currency_col("credit_limit"))
         .withColumn("acct_open_date", clean_expires_col("acct_open_date"))
         .withColumn(
@@ -346,6 +347,7 @@ DATASETS = {
     "transactions": {
         "input_path": "bronze/transactions_data.csv",
         "output_path": "silver/transactions",
+        "quarantine_path": "quarantine/transactions",
         "transform_func": transform_transactions,
         "reader_type": "csv",
         "write_mode": "append",
@@ -356,6 +358,7 @@ DATASETS = {
     "cards": {
         "input_path": "bronze/cards_data.csv",
         "output_path": "silver/cards",
+        "quarantine_path": "quarantine/cards",
         "transform_func": transform_cards,
         "reader_type": "csv",
         "write_mode": "upsert",
@@ -368,6 +371,7 @@ DATASETS = {
     "users": {
         "input_path": "bronze/users_data.csv",
         "output_path": "silver/users",
+        "quarantine_path": "quarantine/users",
         "transform_func": transform_users,
         "reader_type": "csv",
         "write_mode": "upsert",
@@ -380,12 +384,13 @@ DATASETS = {
     "mcc": {
         "input_path": "bronze/mcc_codes.json",
         "output_path": "silver/mcc",
+        "quarantine_path": "quarantine/mcc",
         "transform_func": transform_mcc,
         "reader_type": "json",
         "reader_options": {"multiLine": "true"},
         "write_mode": "overwrite",
         "partition_cols": [],
-        "mandatory_cols": ["mcc_code"],
+        "mandatory_cols": [],
         "silver_schema": MccSilverSchema,
     },
 }
@@ -456,13 +461,17 @@ def _run_dataset(
             )
         else:
             after_dedup = silver_df
-            quarantine_duplicates = silver_df.limit(0)
+            quarantine_duplicates = raw_df.limit(0)
 
-        clean_df = schema_enforcing(after_dedup, config["silver_schema"])
-        clean_df = add_audit_columns(clean_df)
+        clean_df = add_audit_columns(after_dedup)
 
-        all_quarantine = quarantine_mandatory.unionByName(quarantine_duplicates)
-        write_quarantine(all_quarantine, f"{quarantine_base_path.rstrip('/')}/{name}")
+        all_quarantine = quarantine_mandatory.unionByName(
+            quarantine_duplicates, allowMissingColumns=True
+        )
+        write_quarantine(
+            all_quarantine,
+            f"{quarantine_base_path.rstrip('/')}/{config['quarantine_path'].lstrip('/')}",
+        )
 
         output_path = (
             f"{output_base_path.rstrip('/')}/{config['output_path'].lstrip('/')}"

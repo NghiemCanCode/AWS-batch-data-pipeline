@@ -23,6 +23,8 @@ sys.path.append(
     os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../src"))
 )
 
+from unittest.mock import patch
+
 from aws_pipeline.transformation.bronze_to_silver import (
     schema_enforcing,
     audit_mandatory_columns,
@@ -32,6 +34,8 @@ from aws_pipeline.transformation.bronze_to_silver import (
     transform_users,
     transform_mcc,
     add_audit_columns,
+    _run_dataset,
+    DATASETS,
 )
 from aws_pipeline.schemas.silver_schema import (
     TransactionsSilverSchema,
@@ -79,7 +83,12 @@ class TestAuditMandatoryColumns:
 
     def test_quarantine_metadata_columns_present(self, spark):
         data = [(None, "Alice")]
-        schema = StructType([StructField("id", StringType(), True), StructField("name", StringType(), True)])
+        schema = StructType(
+            [
+                StructField("id", StringType(), True),
+                StructField("name", StringType(), True),
+            ]
+        )
         df = spark.createDataFrame(data, schema)
 
         _, corrupted = audit_mandatory_columns(df, ["id"], "transactions")
@@ -94,7 +103,12 @@ class TestAuditMandatoryColumns:
 
     def test_quarantine_reason_and_source_correct(self, spark):
         data = [(None, "Alice")]
-        schema = StructType([StructField("id", StringType(), True), StructField("name", StringType(), True)])
+        schema = StructType(
+            [
+                StructField("id", StringType(), True),
+                StructField("name", StringType(), True),
+            ]
+        )
         df = spark.createDataFrame(data, schema)
 
         _, corrupted = audit_mandatory_columns(df, ["id"], "transactions")
@@ -279,7 +293,7 @@ class TestTransformTransactions:
             "merchant_id": "500",
             "merchant_city": "  City  ",
             "merchant_state": "  ca  ",
-            "zip": "12345",
+            "zip": "12345.0",
             "mcc": "1234",
             "errors": "",
         }
@@ -575,3 +589,99 @@ class TestAddAuditColumns:
         row = add_audit_columns(df).collect()[0]
 
         assert row["_is_deleted"] is False
+
+
+# ──────────────────────────────────────────────
+# _run_dataset (mcc)
+# ──────────────────────────────────────────────
+
+
+class TestRunDatasetMcc:
+    """
+    Contract: _run_dataset must process the mcc dataset without errors.
+
+    Root-cause under test:
+      DATASETS["mcc"]["mandatory_cols"] = ["mcc_code"], but audit_mandatory_columns
+      runs on raw_df BEFORE transform_mcc (unpivot). Raw mcc JSON has MCC codes as
+      column names (e.g. "5812", "5541") — the column "mcc_code" does not exist yet.
+      This causes an AnalysisException inside audit_mandatory_columns.
+
+    Fix required: mandatory_cols for mcc must reference columns that exist in the raw
+    data, or be set to [] since mcc is a full-overwrite reference table.
+    """
+
+    _RAW_SCHEMA = StructType(
+        [
+            StructField("5812", StringType(), True),
+            StructField("5541", StringType(), True),
+        ]
+    )
+
+    def _raw_mcc_df(self, spark):
+        return spark.createDataFrame(
+            [("Eating Places", "Service Stations")], self._RAW_SCHEMA
+        )
+
+    def test_mcc_mandatory_cols_exist_in_raw_data(self, spark):
+        """Every column in mandatory_cols must be present in the raw mcc DataFrame.
+
+        Fails today because 'mcc_code' is only created after transform_mcc unpivots
+        the data — it does not exist in the raw JSON input.
+        """
+        raw_df = self._raw_mcc_df(spark)
+        mcc_mandatory_cols = DATASETS["mcc"]["mandatory_cols"]
+
+        missing = [c for c in mcc_mandatory_cols if c not in raw_df.columns]
+        assert missing == [], (
+            f"mandatory_cols {missing} do not exist in raw mcc data "
+            f"(raw columns: {raw_df.columns}). "
+            f"'mcc_code' is only created after transform_mcc (unpivot). "
+            f"Fix: set mandatory_cols to [] for the mcc dataset."
+        )
+
+    def test_run_dataset_mcc_produces_correct_output(self, spark, tmp_path):
+        """_run_dataset with mcc config must write mcc_code + merchant_name to Silver."""
+        raw_df = self._raw_mcc_df(spark)
+        output_base = str(tmp_path / "silver")
+        quarantine_base = str(tmp_path / "quarantine")
+
+        with patch(
+            "aws_pipeline.transformation.bronze_to_silver.read_bronze_json",
+            return_value=raw_df,
+        ):
+            _run_dataset(
+                spark=spark,
+                name="mcc",
+                config=DATASETS["mcc"],
+                input_base_path="s3://fake-bucket/",
+                output_base_path=output_base,
+                quarantine_base_path=quarantine_base,
+            )
+
+        result = spark.read.parquet(f"{output_base}/silver/mcc")
+        lookup = {r["mcc_code"]: r["merchant_name"] for r in result.collect()}
+
+        assert lookup["5812"] == "Eating Places"
+        assert lookup["5541"] == "Service Stations"
+
+    def test_run_dataset_mcc_quarantine_is_empty_for_clean_data(self, spark, tmp_path):
+        """Clean mcc data must produce zero quarantine rows."""
+        raw_df = self._raw_mcc_df(spark)
+        output_base = str(tmp_path / "silver")
+        quarantine_base = str(tmp_path / "quarantine")
+
+        with patch(
+            "aws_pipeline.transformation.bronze_to_silver.read_bronze_json",
+            return_value=raw_df,
+        ):
+            _run_dataset(
+                spark=spark,
+                name="mcc",
+                config=DATASETS["mcc"],
+                input_base_path="s3://fake-bucket/",
+                output_base_path=output_base,
+                quarantine_base_path=quarantine_base,
+            )
+
+        quarantine = spark.read.parquet(f"{quarantine_base}/mcc")
+        assert quarantine.count() == 0
