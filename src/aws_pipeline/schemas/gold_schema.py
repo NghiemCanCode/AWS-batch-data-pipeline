@@ -4,13 +4,10 @@ from pyspark.sql.types import (
     StringType, 
     TimestampNTZType,
     DecimalType, 
-    IntegerType, 
-    DoubleType,
+    IntegerType,
     DateType,
     BooleanType,
-    ShortType,
-    LongType,
-    FloatType
+    ShortType
 )
  
 # --- Data Governance Policies ---
@@ -38,13 +35,12 @@ DateDimensionSchema = StructType([
     StructField("date_key", IntegerType(), False), # Smart key
     # -- Dimension Attributes
     StructField("full_date", DateType(), False),
-    StructField("day_of_week", StringType(), True),
+    StructField("day_of_week", ShortType(), True),
     StructField("day_of_month", ShortType(), True),
     StructField("day_of_year", ShortType(), True),
     StructField("week_of_month", ShortType(), True),
     StructField("week_of_year", ShortType(), True),
     StructField("month", ShortType(), True),
-    StructField("month_name", StringType(), True),
     StructField("quarter", ShortType(), True),
     StructField("year", ShortType(), True),
     StructField("is_weekend", BooleanType(), True),
