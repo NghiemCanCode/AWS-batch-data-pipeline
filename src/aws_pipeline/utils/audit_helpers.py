@@ -8,9 +8,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def schema_enforcing(
-    df: DataFrame, schema: StructType, batch_logical_date: str
-) -> DataFrame:
+def schema_enforcing(df: DataFrame, schema: StructType) -> DataFrame:
     select_cols = []
 
     for field in schema.fields:

@@ -30,7 +30,9 @@ def _calculate_holy_day(spark, start_year, end_year):
     return holiday_df
 
 
-def generate_date_dim(start_date: str, end_date: str, spark: SparkSession) -> DataFrame:
+def generate_date_dim(
+    start_date: str, end_date: str, spark: SparkSession, batch_logical_date
+) -> DataFrame:
     """
     Generate a date dimension table for a given date range.
 
@@ -88,7 +90,7 @@ def generate_date_dim(start_date: str, end_date: str, spark: SparkSession) -> Da
         "is_holiday", F.when(F.col("holiday_name").isNotNull(), True).otherwise(False)
     )
 
-    date_dim_df = add_audit_columns(date_dim_df)
+    date_dim_df = add_audit_columns(date_dim_df, batch_logical_date)
     date_dim_df = schema_enforcing(date_dim_df, DateDimensionSchema)
 
     return date_dim_df

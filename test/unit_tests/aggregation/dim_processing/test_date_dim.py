@@ -13,5 +13,5 @@ def test_generate_date_dim(spark):
     START_DATE = "2026-01-01"
     END_DATE = "2026-01-31"
 
-    df = generate_date_dim(START_DATE, END_DATE, spark)
+    df = generate_date_dim(START_DATE, END_DATE, spark, "2026-02-04")
     df.show(10)
