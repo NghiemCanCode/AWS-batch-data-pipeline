@@ -1,9 +1,11 @@
+"""
+This dimension is generated periodically at specific times and does not run concurrently with the main pipelines.
+"""
+
 from datetime import datetime
 
 import holidays
-from pyspark.sql import SparkSession
-from pyspark.sql import functions as F
-from pyspark.sql import DataFrame
+from pyspark.sql import SparkSession, DataFrame, functions as F
 
 from ...utils.audit_helpers import schema_enforcing, add_audit_columns
 from ...schemas.gold_schema import DateDimensionSchema
