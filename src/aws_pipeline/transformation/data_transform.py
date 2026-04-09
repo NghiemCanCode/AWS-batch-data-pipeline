@@ -103,4 +103,6 @@ def clean_cvv_col(column_name: str):
 
 
 def clean_address_col(column_name: str):
+    # TODO: Parse city and state into separate columns (city, state) for Gold layer address_key = MD5(city + state).
+    # Current logic only strips leading street number — format "City, STATE" is assumed but not validated.
     return F.regexp_replace(F.col(column_name), r"^\d+\s+", "")

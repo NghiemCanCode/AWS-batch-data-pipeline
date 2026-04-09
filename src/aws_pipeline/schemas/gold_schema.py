@@ -75,6 +75,8 @@ TimeDimensionSchema = StructType(
 
 CustomerDimensionSchema = StructType(
     [
+        # SCD Type 2 | Change-tracked fields: income_bracket, address_key
+        # Non-tracked fields (SCD Type 1 correction only): birth_year, birth_month, gender
         # -- Primary key
         # -- Surrogate Key = MD5(customer_id + effective_from_date)
         StructField("customer_key", StringType(), False),
@@ -82,17 +84,29 @@ CustomerDimensionSchema = StructType(
         StructField(
             "customer_id", StringType(), False
         ),  # [PII] Natural Key from Source
-        # StructField("retirement_age", ShortType(), True), Will be in BI Redshift's view
+        StructField("retirement_age", ShortType(), True),
+        # -- The "current_age" column will be automatically calculated in BI Redshift's view
         # -- ML usecase, Will be limit BI Redshift's view
-        StructField("birth_month", ShortType(), True),  # [SENSITIVE] Quasi-identifier
-        StructField("birth_year", ShortType(), True),  # [SENSITIVE] Quasi-identifier
+        StructField(
+            "birth_month", ShortType(), True
+        ),  # [SENSITIVE] Quasi-identifier | NOT tracked in SCD change detection
+        StructField(
+            "birth_year", ShortType(), True
+        ),  # [SENSITIVE] Quasi-identifier | NOT tracked in SCD change detection
         StructField("gender", StringType(), True),  # [SENSITIVE] Quasi-identifier
         StructField(
             "income_bracket", StringType(), True
         ),  # [SENSITIVE] Financial profiling
+        # Income brackets based on U.S. Pew Research:
+        #   "Low income"    : yearly_income < $60,000
+        #   "Middle income" : yearly_income $60,000 – $180,000
+        #   "High income"   : yearly_income > $180,000
         StructField(
             "address_key", StringType(), True
-        ),  # Use location dimension as role-playing dimension
+        ),  # FK to LocationDimensionSchema | Computed as MD5(city + state),
+        # zip excluded (unavailable in users source)
+        # Limitation: Silver address field not yet parsed into city/state
+        # see TODO in data_transform.clean_address_col
         # -- SCD Fields
         StructField("effective_from_date", TimestampNTZType(), False),  # UTC
         StructField("effective_to_date", TimestampNTZType(), False),  # UTC
@@ -145,12 +159,11 @@ MerchantDimensionSchema = StructType(
 LocationDimensionSchema = StructType(
     [
         # -- Primary key
-        # -- Surrogate Key = MD5(city + state + zip)
+        # -- Surrogate Key = MD5(city + state)
         StructField("location_key", StringType(), False),
         # -- Dimension Attributes
         StructField("city", StringType(), True),  # [PII] Location data
         StructField("state", StringType(), True),  # [PII] Location data
-        StructField("zip", StringType(), True),  # [PII] Location data
     ]
     + SYSTEM_AUDIT_COLUMNS
 )
@@ -207,6 +220,9 @@ AccountTransactionFactSchema = StructType(
         StructField("currency_key", ShortType(), False),
         # -- Measures
         StructField("transaction_amount", DecimalType(18, 2), False),
+        StructField(
+            "zip_code", StringType(), True
+        ),  # Merchant zip code, thay đổi mỗi lần giao dịch tùy theo chi nhánh
     ]
     + SYSTEM_AUDIT_COLUMNS
 )
