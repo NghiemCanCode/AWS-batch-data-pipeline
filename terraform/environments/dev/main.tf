@@ -15,7 +15,7 @@ module "code-bucket" {
   bucket_tags = {
     "environment" : "dev"
   }
-  folder_path = ["jobs/", "packages", "dags/", "logs"]
+  folder_path = ["jobs/", "packages/", "dags/", "logs/"]
 }
 
 module "emr-serverless-application" {
