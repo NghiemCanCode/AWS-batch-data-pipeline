@@ -85,8 +85,8 @@ config_overrides=$(cat <<EOF
         "spark.emr-serverless.driverEnv.INPUT_PATH": "$s3_datalake",
         "spark.emr-serverless.driverEnv.OUTPUT_PATH": "$s3_datalake",
         "spark.emr-serverless.driverEnv.QUARANTINE_PATH": "$s3_datalake",
-        "spark.pyspark.python": "/usr/bin/python3.11",
-        "spark.pyspark.driver.python": "/usr/bin/python3.11"
+        "spark.emr-serverless.driverEnv.PYSPARK_DRIVER_PYTHON": "/usr/bin/python3.12",
+        "spark.emr-serverless.driverEnv.PYSPARK_PYTHON": "/usr/bin/python3.12"
       }
     }
   ]

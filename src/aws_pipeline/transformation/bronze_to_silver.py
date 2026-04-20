@@ -23,7 +23,7 @@ WRITE MODE PER DATASET
 from pyspark.errors import AnalysisException
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
-from pyspark.sql.types import StructType
+from pyspark.sql.types import StringType, StructField, StructType
 import logging
 
 from .load_data_source import read_bronze_csv, read_bronze_json
@@ -32,7 +32,6 @@ from .data_transform import (
     clean_currency_col,
     clean_trans_errors_col,
     mask_card_num_col,
-    clean_address_col,
     clean_timestamp_col,
     trim_and_lower_col,
     trim_and_upper_col,
@@ -41,6 +40,7 @@ from .data_transform import (
     clean_bool_col,
     clean_num_col,
     clean_zip_col,
+    reverse_geocode_address,
 )
 
 try:
@@ -288,14 +288,13 @@ def transform_users(df: DataFrame) -> DataFrame:
     df = (
         df.withColumnRenamed("id", "user_id")
         .withColumn("user_id", F.col("user_id").cast("string"))
-        .drop("current_age", "latitude", "longitude")
+        .drop("current_age")
         .withColumn(
             "retirement_age", clean_num_col("retirement_age", num_range=[50, 100])
         )
         .withColumn("birth_year", clean_num_col("birth_year", num_range=[1900, 2026]))
         .withColumn("birth_month", clean_num_col("birth_month", num_range=[1, 12]))
         .withColumn("gender", clean_category_col("gender", GENDER_LIST))
-        .withColumn("address", clean_address_col("address"))
         .withColumn("per_capita_income", clean_currency_col("per_capita_income"))
         .withColumn("yearly_income", clean_currency_col("yearly_income"))
         .withColumn("total_debt", clean_currency_col("total_debt"))
@@ -303,6 +302,17 @@ def transform_users(df: DataFrame) -> DataFrame:
         .withColumn(
             "num_credit_cards", clean_num_col("num_credit_cards", num_range=[1, 100])
         )
+    )
+
+    geo_schema = StructType(
+        df.schema.fields
+        + [
+            StructField("city", StringType(), True),
+            StructField("state", StringType(), True),
+        ]
+    )
+    df = df.mapInPandas(
+        reverse_geocode_address("latitude", "longitude"), schema=geo_schema
     )
 
     return schema_enforcing(df, UsersSilverSchema)
@@ -376,7 +386,7 @@ DATASETS = {
         "reader_type": "csv",
         "write_mode": "upsert",
         "partition_cols": [],
-        "mandatory_cols": ["id"],
+        "mandatory_cols": ["id", "longitude", "latitude"],
         "id_col": "user_id",
         "timestamp_col": "_updated_at",
         "silver_schema": UsersSilverSchema,
