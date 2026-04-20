@@ -15,12 +15,18 @@ from unittest.mock import MagicMock
 import sys
 import os
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../src')))
+sys.path.append(
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../src"))
+)
 
-from aws_pipeline.transformation.load_data_source import read_bronze_csv, read_bronze_json
+from aws_pipeline.transformation.load_data_source import (
+    read_bronze_csv,
+    read_bronze_json,
+)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def _csv_reader(mock_spark):
     """Set up a mock Spark CSV reader chain: spark.read.option(...).option(...).csv(...)"""
@@ -34,16 +40,20 @@ def _csv_reader(mock_spark):
 # read_bronze_csv — input validation
 # ──────────────────────────────────────────────
 
+
 class TestReadBronzeCsvValidation:
     """Contract: both paths must be non-empty strings.
     Failing silently here points Spark at a wrong path — surfacing as an obscure runtime error.
     """
 
-    @pytest.mark.parametrize("base, rel", [
-        ("",            "bronze/data.csv"),
-        ("s3://bucket", ""),
-        ("",            ""),
-    ])
+    @pytest.mark.parametrize(
+        "base, rel",
+        [
+            ("", "bronze/data.csv"),
+            ("s3://bucket", ""),
+            ("", ""),
+        ],
+    )
     def test_empty_paths_raise_value_error(self, base, rel):
         with pytest.raises(ValueError, match="non-empty"):
             read_bronze_csv(MagicMock(), base, rel)
@@ -61,19 +71,23 @@ class TestReadBronzeCsvValidation:
 # read_bronze_csv — path construction
 # ──────────────────────────────────────────────
 
+
 class TestReadBronzeCsvPathConstruction:
     """Contract: composed path must be clean regardless of trailing/leading slash variations.
     Double slashes silently break S3 key lookups.
     """
 
-    @pytest.mark.parametrize("base, rel, expected", [
-        ("s3://bucket",   "bronze/data.csv",  "s3://bucket/bronze/data.csv"),
-        ("s3://bucket/",  "bronze/data.csv",  "s3://bucket/bronze/data.csv"),
-        ("s3://bucket",   "/bronze/data.csv", "s3://bucket/bronze/data.csv"),
-        ("s3://bucket/",  "/bronze/data.csv", "s3://bucket/bronze/data.csv"),
-        ("s3a://bucket",  "raw/file.csv",     "s3a://bucket/raw/file.csv"),
-        ("hdfs:///data",  "bronze/file.csv",  "hdfs:///data/bronze/file.csv"),
-    ])
+    @pytest.mark.parametrize(
+        "base, rel, expected",
+        [
+            ("s3://bucket", "bronze/data.csv", "s3://bucket/bronze/data.csv"),
+            ("s3://bucket/", "bronze/data.csv", "s3://bucket/bronze/data.csv"),
+            ("s3://bucket", "/bronze/data.csv", "s3://bucket/bronze/data.csv"),
+            ("s3://bucket/", "/bronze/data.csv", "s3://bucket/bronze/data.csv"),
+            ("s3a://bucket", "raw/file.csv", "s3a://bucket/raw/file.csv"),
+            ("hdfs:///data", "bronze/file.csv", "hdfs:///data/bronze/file.csv"),
+        ],
+    )
     def test_path_normalization(self, base, rel, expected):
         mock_spark = MagicMock()
         mock_reader = _csv_reader(mock_spark)
@@ -86,6 +100,7 @@ class TestReadBronzeCsvPathConstruction:
 # ──────────────────────────────────────────────
 # read_bronze_csv — Spark options
 # ──────────────────────────────────────────────
+
 
 class TestReadBronzeCsvSparkOptions:
     """Contract: Spark reader must receive exact options.
@@ -102,18 +117,25 @@ class TestReadBronzeCsvSparkOptions:
         mock_reader.option.assert_any_call("inferSchema", "false")
         mock_reader.option.assert_any_call("delimiter", ",")
 
-    @pytest.mark.parametrize("header, infer_schema, delimiter", [
-        (False, True,  "|"),
-        (True,  True,  "\t"),
-        (False, False, ";"),
-    ])
+    @pytest.mark.parametrize(
+        "header, infer_schema, delimiter",
+        [
+            (False, True, "|"),
+            (True, True, "\t"),
+            (False, False, ";"),
+        ],
+    )
     def test_custom_options_forwarded(self, header, infer_schema, delimiter):
         mock_spark = MagicMock()
         mock_reader = _csv_reader(mock_spark)
 
         read_bronze_csv(
-            mock_spark, "s3://bucket", "data.csv",
-            header=header, infer_schema=infer_schema, delimiter=delimiter,
+            mock_spark,
+            "s3://bucket",
+            "data.csv",
+            header=header,
+            infer_schema=infer_schema,
+            delimiter=delimiter,
         )
 
         mock_reader.option.assert_any_call("header", str(header).lower())
@@ -145,14 +167,18 @@ class TestReadBronzeCsvSparkOptions:
 # read_bronze_json — input validation
 # ──────────────────────────────────────────────
 
+
 class TestReadBronzeJsonValidation:
     """Same empty/None path contract as CSV."""
 
-    @pytest.mark.parametrize("base, rel", [
-        ("",            "bronze/mcc.json"),
-        ("s3://bucket", ""),
-        ("",            ""),
-    ])
+    @pytest.mark.parametrize(
+        "base, rel",
+        [
+            ("", "bronze/mcc.json"),
+            ("s3://bucket", ""),
+            ("", ""),
+        ],
+    )
     def test_empty_paths_raise_value_error(self, base, rel):
         with pytest.raises(ValueError, match="non-empty"):
             read_bronze_json(MagicMock(), base, rel)
@@ -170,14 +196,17 @@ class TestReadBronzeJsonValidation:
 # read_bronze_json — path construction
 # ──────────────────────────────────────────────
 
-class TestReadBronzeJsonPathConstruction:
 
-    @pytest.mark.parametrize("base, rel, expected", [
-        ("s3://bucket",   "bronze/mcc.json",  "s3://bucket/bronze/mcc.json"),
-        ("s3://bucket/",  "bronze/mcc.json",  "s3://bucket/bronze/mcc.json"),
-        ("s3://bucket",   "/bronze/mcc.json", "s3://bucket/bronze/mcc.json"),
-        ("s3://bucket/",  "/bronze/mcc.json", "s3://bucket/bronze/mcc.json"),
-    ])
+class TestReadBronzeJsonPathConstruction:
+    @pytest.mark.parametrize(
+        "base, rel, expected",
+        [
+            ("s3://bucket", "bronze/mcc.json", "s3://bucket/bronze/mcc.json"),
+            ("s3://bucket/", "bronze/mcc.json", "s3://bucket/bronze/mcc.json"),
+            ("s3://bucket", "/bronze/mcc.json", "s3://bucket/bronze/mcc.json"),
+            ("s3://bucket/", "/bronze/mcc.json", "s3://bucket/bronze/mcc.json"),
+        ],
+    )
     def test_path_normalization(self, base, rel, expected):
         mock_spark = MagicMock()
         mock_spark.read.json.return_value = MagicMock()
@@ -190,6 +219,7 @@ class TestReadBronzeJsonPathConstruction:
 # ──────────────────────────────────────────────
 # read_bronze_json — Spark options
 # ──────────────────────────────────────────────
+
 
 class TestReadBronzeJsonSparkOptions:
     """Contract: ALL kwargs must reach Spark as reader options.
@@ -214,7 +244,9 @@ class TestReadBronzeJsonSparkOptions:
         mock_reader.json.return_value = expected_df
 
         result = read_bronze_json(
-            mock_spark, "s3://bucket", "bronze/mcc.json",
+            mock_spark,
+            "s3://bucket",
+            "bronze/mcc.json",
             multiLine="true",
         )
 
@@ -230,13 +262,16 @@ class TestReadBronzeJsonSparkOptions:
         mock_spark.read.option.return_value = mock_reader
 
         read_bronze_json(
-            mock_spark, "s3://bucket", "bronze/mcc.json",
-            multiLine="true", encoding="UTF-8", allowComments="true",
+            mock_spark,
+            "s3://bucket",
+            "bronze/mcc.json",
+            multiLine="true",
+            encoding="UTF-8",
+            allowComments="true",
         )
 
         all_option_calls = (
-            mock_spark.read.option.call_args_list
-            + mock_reader.option.call_args_list
+            mock_spark.read.option.call_args_list + mock_reader.option.call_args_list
         )
         option_keys = [c.args[0] for c in all_option_calls]
 

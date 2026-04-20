@@ -45,12 +45,13 @@ def _optional(key: str, default=None):
 
 
 def get_spark_session(app_name: str = "BronzeToSilver") -> SparkSession:
-    return (
-        SparkSession.builder
-        .appName(app_name)
+    spark = (
+        SparkSession.builder.appName(app_name)
         .config("spark.sql.timestampType", "TIMESTAMP_NTZ")
         .getOrCreate()
     )
+    spark.sparkContext.setLogLevel("WARN")
+    return spark
 
 
 if __name__ == "__main__":

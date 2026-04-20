@@ -14,11 +14,18 @@ import os
 from datetime import date, datetime
 from decimal import Decimal
 from pyspark.sql.types import (
-    StructType, StructField,
-    StringType, BooleanType, IntegerType, DecimalType,
+    StructType,
+    StructField,
+    StringType,
+    BooleanType,
+    IntegerType,
+    DecimalType,
+    DoubleType,
 )
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../src')))
+sys.path.append(
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../src"))
+)
 
 from aws_pipeline.transformation.data_transform import (
     trim_and_upper_col,
@@ -33,16 +40,18 @@ from aws_pipeline.transformation.data_transform import (
     clean_expires_col,
     clean_cvv_col,
     clean_address_col,
+    reverse_geocode_address,
 )
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+
 def make_df(spark, values: list, col_name: str = "value"):
     """Create a single-column DataFrame from a list of values (all StringType)."""
     return spark.createDataFrame(
         [(v,) for v in values],
-        schema=StructType([StructField(col_name, StringType(), nullable=True)])
+        schema=StructType([StructField(col_name, StringType(), nullable=True)]),
     )
 
 
@@ -53,8 +62,8 @@ def collect_col(df, col_name: str = "result") -> list:
 
 # ── trim_and_upper_col ────────────────────────────────────────────────────────
 
-class TestTrimAndUpperCol:
 
+class TestTrimAndUpperCol:
     def test_strips_whitespace_and_uppercases(self, spark):
         df = make_df(spark, ["  hello world  "])
         result = collect_col(df.withColumn("result", trim_and_upper_col("value")))
@@ -73,8 +82,8 @@ class TestTrimAndUpperCol:
 
 # ── trim_and_lower_col ────────────────────────────────────────────────────────
 
-class TestTrimAndLowerCol:
 
+class TestTrimAndLowerCol:
     def test_strips_whitespace_and_lowercases(self, spark):
         df = make_df(spark, ["  HO CHI MINH  "])
         result = collect_col(df.withColumn("result", trim_and_lower_col("value")))
@@ -88,8 +97,8 @@ class TestTrimAndLowerCol:
 
 # ── clean_timestamp_col ───────────────────────────────────────────────────────
 
-class TestCleanTimestampCol:
 
+class TestCleanTimestampCol:
     def test_valid_timestamp_parsed_correctly(self, spark):
         df = make_df(spark, ["2026-03-15 10:30:00"])
         result = collect_col(df.withColumn("result", clean_timestamp_col("value")))
@@ -113,8 +122,8 @@ class TestCleanTimestampCol:
 
 # ── clean_currency_col ────────────────────────────────────────────────────────
 
-class TestCleanCurrencyCol:
 
+class TestCleanCurrencyCol:
     def test_removes_dollar_and_comma(self, spark):
         df = make_df(spark, ["$1,234.56"])
         result = collect_col(df.withColumn("result", clean_currency_col("value")))
@@ -149,8 +158,8 @@ class TestCleanCurrencyCol:
 
 # ── clean_bool_col ────────────────────────────────────────────────────────────
 
-class TestCleanBoolCol:
 
+class TestCleanBoolCol:
     def test_true_and_false_strings(self, spark):
         df = make_df(spark, ["TRUE", "FALSE"])
         result = collect_col(df.withColumn("result", clean_bool_col("value")))
@@ -186,8 +195,8 @@ class TestCleanBoolCol:
 
 # ── clean_num_col ─────────────────────────────────────────────────────────────
 
-class TestCleanNumCol:
 
+class TestCleanNumCol:
     def test_valid_number_no_range(self, spark):
         df = make_df(spark, ["42"])
         result = collect_col(df.withColumn("result", clean_num_col("value")))
@@ -200,23 +209,31 @@ class TestCleanNumCol:
 
     def test_within_range_returns_int(self, spark):
         df = make_df(spark, ["25"])
-        result = collect_col(df.withColumn("result", clean_num_col("value", num_range=[1, 100])))
+        result = collect_col(
+            df.withColumn("result", clean_num_col("value", num_range=[1, 100]))
+        )
         assert result == [25]
 
     def test_below_range_returns_null(self, spark):
         df = make_df(spark, ["0"])
-        result = collect_col(df.withColumn("result", clean_num_col("value", num_range=[1, 100])))
+        result = collect_col(
+            df.withColumn("result", clean_num_col("value", num_range=[1, 100]))
+        )
         assert result == [None]
 
     def test_above_range_returns_null(self, spark):
         df = make_df(spark, ["101"])
-        result = collect_col(df.withColumn("result", clean_num_col("value", num_range=[1, 100])))
+        result = collect_col(
+            df.withColumn("result", clean_num_col("value", num_range=[1, 100]))
+        )
         assert result == [None]
 
     def test_boundary_inclusive(self, spark):
         """between() is inclusive on both ends."""
         df = make_df(spark, ["1", "100"])
-        result = collect_col(df.withColumn("result", clean_num_col("value", num_range=[1, 100])))
+        result = collect_col(
+            df.withColumn("result", clean_num_col("value", num_range=[1, 100]))
+        )
         assert result == [1, 100]
 
     def test_non_numeric_returns_null(self, spark):
@@ -237,40 +254,50 @@ class TestCleanNumCol:
 
 # ── clean_category_col ────────────────────────────────────────────────────────
 
-class TestCleanCategoryCol:
 
+class TestCleanCategoryCol:
     CATEGORY_LIST = ["VISA", "MASTERCARD", "AMEX", "DISCOVER"]
 
     def test_valid_category(self, spark):
         df = make_df(spark, ["VISA"])
-        result = collect_col(df.withColumn("result", clean_category_col("value", self.CATEGORY_LIST)))
+        result = collect_col(
+            df.withColumn("result", clean_category_col("value", self.CATEGORY_LIST))
+        )
         assert result == ["VISA"]
 
     def test_case_insensitive_matching(self, spark):
         df = make_df(spark, ["visa", "Mastercard"])
-        result = collect_col(df.withColumn("result", clean_category_col("value", self.CATEGORY_LIST)))
+        result = collect_col(
+            df.withColumn("result", clean_category_col("value", self.CATEGORY_LIST))
+        )
         assert result == ["VISA", "MASTERCARD"]
 
     def test_whitespace_trimmed(self, spark):
         df = make_df(spark, ["  AMEX  "])
-        result = collect_col(df.withColumn("result", clean_category_col("value", self.CATEGORY_LIST)))
+        result = collect_col(
+            df.withColumn("result", clean_category_col("value", self.CATEGORY_LIST))
+        )
         assert result == ["AMEX"]
 
     def test_unknown_value_returns_null(self, spark):
         df = make_df(spark, ["UNIONPAY", "JCB"])
-        result = collect_col(df.withColumn("result", clean_category_col("value", self.CATEGORY_LIST)))
+        result = collect_col(
+            df.withColumn("result", clean_category_col("value", self.CATEGORY_LIST))
+        )
         assert result == [None, None]
 
     def test_null_returns_null(self, spark):
         df = make_df(spark, [None])
-        result = collect_col(df.withColumn("result", clean_category_col("value", self.CATEGORY_LIST)))
+        result = collect_col(
+            df.withColumn("result", clean_category_col("value", self.CATEGORY_LIST))
+        )
         assert result == [None]
 
 
 # ── clean_trans_errors_col ────────────────────────────────────────────────────
 
-class TestCleanTransErrorsCol:
 
+class TestCleanTransErrorsCol:
     def test_single_error(self, spark):
         df = make_df(spark, ["BAD PIN"])
         result = collect_col(df.withColumn("result", clean_trans_errors_col("value")))
@@ -319,8 +346,8 @@ class TestCleanTransErrorsCol:
 
 # ── mask_card_num_col ─────────────────────────────────────────────────────────
 
-class TestMaskCardNumCol:
 
+class TestMaskCardNumCol:
     def test_masks_all_except_last_4(self, spark):
         df = make_df(spark, ["1234567890123456"])
         result = collect_col(df.withColumn("result", mask_card_num_col("value")))
@@ -350,8 +377,8 @@ class TestMaskCardNumCol:
 
 # ── clean_expires_col ─────────────────────────────────────────────────────────
 
-class TestCleanExpiresCol:
 
+class TestCleanExpiresCol:
     def test_valid_expiry_parsed_to_first_of_month(self, spark):
         df = make_df(spark, ["03/26"])
         result = collect_col(df.withColumn("result", clean_expires_col("value")))
@@ -375,8 +402,8 @@ class TestCleanExpiresCol:
 
 # ── clean_cvv_col ─────────────────────────────────────────────────────────────
 
-class TestCleanCvvCol:
 
+class TestCleanCvvCol:
     def test_numeric_cvv_returns_true(self, spark):
         df = make_df(spark, ["123", "1234"])
         result = collect_col(df.withColumn("result", clean_cvv_col("value")))
@@ -396,8 +423,8 @@ class TestCleanCvvCol:
 
 # ── clean_address_col ─────────────────────────────────────────────────────────
 
-class TestCleanAddressCol:
 
+class TestCleanAddressCol:
     def test_removes_leading_street_number(self, spark):
         df = make_df(spark, ["123 Main Street"])
         result = collect_col(df.withColumn("result", clean_address_col("value")))
@@ -423,3 +450,57 @@ class TestCleanAddressCol:
         df = make_df(spark, ["123 Route 66 West"])
         result = collect_col(df.withColumn("result", clean_address_col("value")))
         assert result == ["Route 66 West"]
+
+
+class TestReverseGeocodeAddress:
+    coordinates = [
+        (51.5214588, -0.1729636),
+        (9.936033, 76.259952),
+        (37.38605, -122.08385),
+    ]
+
+    def _make_coord_df(self, spark):
+        schema = StructType(
+            [
+                StructField("latitude", DoubleType(), True),
+                StructField("longitude", DoubleType(), True),
+            ]
+        )
+        return spark.createDataFrame(self.coordinates, schema=schema)
+
+    def test_returns_city_and_state_for_known_coordinates(self, spark):
+        df = self._make_coord_df(spark)
+        geo_schema = StructType(
+            df.schema.fields
+            + [
+                StructField("city", StringType(), True),
+                StructField("state", StringType(), True),
+            ]
+        )
+        result_df = df.mapInPandas(
+            reverse_geocode_address("latitude", "longitude"), schema=geo_schema
+        )
+        # key by (lat, lng) to avoid relying on partition order
+        rows = {(r["latitude"], r["longitude"]): r for r in result_df.collect()}
+
+        assert rows[(51.5214588, -0.1729636)]["city"] == "Bayswater"
+        assert rows[(51.5214588, -0.1729636)]["state"] == "England"
+        assert rows[(9.936033, 76.259952)]["city"] == "Cochin"
+        assert rows[(9.936033, 76.259952)]["state"] == "Kerala"
+        assert rows[(37.38605, -122.08385)]["city"] == "Mountain View"
+        assert rows[(37.38605, -122.08385)]["state"] == "California"
+
+    def test_output_schema_has_city_and_state_as_string(self, spark):
+        df = self._make_coord_df(spark)
+        geo_schema = StructType(
+            df.schema.fields
+            + [
+                StructField("city", StringType(), True),
+                StructField("state", StringType(), True),
+            ]
+        )
+        result_df = df.mapInPandas(
+            reverse_geocode_address("latitude", "longitude"), schema=geo_schema
+        )
+        assert isinstance(result_df.schema["city"].dataType, StringType)
+        assert isinstance(result_df.schema["state"].dataType, StringType)
