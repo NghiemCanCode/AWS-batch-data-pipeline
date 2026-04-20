@@ -70,6 +70,13 @@ def clean_trans_errors_col(column_name: str):
     return F.when(F.length(clean_str) > 0, transformed).otherwise(F.lit(None))
 
 
+def clean_zip_col(column_name: str):
+    raw = F.trim(F.col(column_name))
+    return F.when(
+        raw.rlike(r"^\d+(?:\.0+)?$"), raw.cast("double").cast("int").cast("string")
+    ).otherwise(F.lit(None).cast("string"))
+
+
 # --- Card ---
 
 
@@ -96,4 +103,35 @@ def clean_cvv_col(column_name: str):
 
 
 def clean_address_col(column_name: str):
+    """Deprecated"""
     return F.regexp_replace(F.col(column_name), r"^\d+\s+", "")
+
+
+def reverse_geocode_address(lat_col: str = "latitude", lng_col: str = "longitude"):
+    """Factory that returns a mapInPandas-compatible function adding 'city' and 'state' columns.
+
+    Usage:
+        from pyspark.sql.types import StructField, StringType, StructType
+
+        geo_schema = StructType(
+            df.schema.fields + [
+                StructField("city", StringType(), True),
+                StructField("state", StringType(), True),
+            ]
+        )
+        df = df.mapInPandas(reverse_geocode_address("latitude", "longitude"), schema=geo_schema)
+    """
+
+    def _geocode(iterator):
+
+        import reverse_geocoder as rg
+
+        for pdf in iterator:
+            coords = list(zip(pdf[lat_col], pdf[lng_col]))
+            locations = rg.search(coords)
+            pdf = pdf.copy()
+            pdf["city"] = [loc["name"] for loc in locations]
+            pdf["state"] = [loc["admin1"] for loc in locations]
+            yield pdf
+
+    return _geocode

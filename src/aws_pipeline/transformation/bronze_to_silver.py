@@ -23,7 +23,7 @@ WRITE MODE PER DATASET
 from pyspark.errors import AnalysisException
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
-from pyspark.sql.types import StructType
+from pyspark.sql.types import StringType, StructField, StructType
 import logging
 
 from .load_data_source import read_bronze_csv, read_bronze_json
@@ -32,7 +32,6 @@ from .data_transform import (
     clean_currency_col,
     clean_trans_errors_col,
     mask_card_num_col,
-    clean_address_col,
     clean_timestamp_col,
     trim_and_lower_col,
     trim_and_upper_col,
@@ -40,6 +39,8 @@ from .data_transform import (
     clean_cvv_col,
     clean_bool_col,
     clean_num_col,
+    clean_zip_col,
+    reverse_geocode_address,
 )
 
 try:
@@ -244,7 +245,7 @@ def transform_transactions(df: DataFrame) -> DataFrame:
         )
         .withColumn("merchant_city", trim_and_lower_col("merchant_city"))
         .withColumn("merchant_state", trim_and_upper_col("merchant_state"))
-        .withColumn("zip", F.col("zip").cast("int").cast("string"))
+        .withColumn("zip", clean_zip_col("zip"))
         .withColumn("errors", clean_trans_errors_col("errors"))
         .withColumn("is_error", F.col("errors").isNotNull())
     )
@@ -268,7 +269,7 @@ def transform_cards(df: DataFrame) -> DataFrame:
         .withColumn("mask_card_number", mask_card_num_col("card_number"))
         .withColumn("expires", clean_expires_col("expires"))
         .withColumn("has_a_cvv", clean_cvv_col("cvv"))
-        .withColumn("has_chip", clean_bool_col("use_chip"))
+        .withColumn("has_chip", clean_bool_col("has_chip"))
         .withColumn("credit_limit", clean_currency_col("credit_limit"))
         .withColumn("acct_open_date", clean_expires_col("acct_open_date"))
         .withColumn(
@@ -287,14 +288,13 @@ def transform_users(df: DataFrame) -> DataFrame:
     df = (
         df.withColumnRenamed("id", "user_id")
         .withColumn("user_id", F.col("user_id").cast("string"))
-        .drop("current_age", "latitude", "longitude")
+        .drop("current_age")
         .withColumn(
             "retirement_age", clean_num_col("retirement_age", num_range=[50, 100])
         )
         .withColumn("birth_year", clean_num_col("birth_year", num_range=[1900, 2026]))
         .withColumn("birth_month", clean_num_col("birth_month", num_range=[1, 12]))
         .withColumn("gender", clean_category_col("gender", GENDER_LIST))
-        .withColumn("address", clean_address_col("address"))
         .withColumn("per_capita_income", clean_currency_col("per_capita_income"))
         .withColumn("yearly_income", clean_currency_col("yearly_income"))
         .withColumn("total_debt", clean_currency_col("total_debt"))
@@ -302,6 +302,17 @@ def transform_users(df: DataFrame) -> DataFrame:
         .withColumn(
             "num_credit_cards", clean_num_col("num_credit_cards", num_range=[1, 100])
         )
+    )
+
+    geo_schema = StructType(
+        df.schema.fields
+        + [
+            StructField("city", StringType(), True),
+            StructField("state", StringType(), True),
+        ]
+    )
+    df = df.mapInPandas(
+        reverse_geocode_address("latitude", "longitude"), schema=geo_schema
     )
 
     return schema_enforcing(df, UsersSilverSchema)
@@ -346,6 +357,7 @@ DATASETS = {
     "transactions": {
         "input_path": "bronze/transactions_data.csv",
         "output_path": "silver/transactions",
+        "quarantine_path": "quarantine/transactions",
         "transform_func": transform_transactions,
         "reader_type": "csv",
         "write_mode": "append",
@@ -356,6 +368,7 @@ DATASETS = {
     "cards": {
         "input_path": "bronze/cards_data.csv",
         "output_path": "silver/cards",
+        "quarantine_path": "quarantine/cards",
         "transform_func": transform_cards,
         "reader_type": "csv",
         "write_mode": "upsert",
@@ -368,11 +381,12 @@ DATASETS = {
     "users": {
         "input_path": "bronze/users_data.csv",
         "output_path": "silver/users",
+        "quarantine_path": "quarantine/users",
         "transform_func": transform_users,
         "reader_type": "csv",
         "write_mode": "upsert",
         "partition_cols": [],
-        "mandatory_cols": ["id"],
+        "mandatory_cols": ["id", "longitude", "latitude"],
         "id_col": "user_id",
         "timestamp_col": "_updated_at",
         "silver_schema": UsersSilverSchema,
@@ -380,12 +394,13 @@ DATASETS = {
     "mcc": {
         "input_path": "bronze/mcc_codes.json",
         "output_path": "silver/mcc",
+        "quarantine_path": "quarantine/mcc",
         "transform_func": transform_mcc,
         "reader_type": "json",
         "reader_options": {"multiLine": "true"},
         "write_mode": "overwrite",
         "partition_cols": [],
-        "mandatory_cols": ["mcc_code"],
+        "mandatory_cols": [],
         "silver_schema": MccSilverSchema,
     },
 }
@@ -456,13 +471,17 @@ def _run_dataset(
             )
         else:
             after_dedup = silver_df
-            quarantine_duplicates = silver_df.limit(0)
+            quarantine_duplicates = raw_df.limit(0)
 
-        clean_df = schema_enforcing(after_dedup, config["silver_schema"])
-        clean_df = add_audit_columns(clean_df)
+        clean_df = add_audit_columns(after_dedup)
 
-        all_quarantine = quarantine_mandatory.unionByName(quarantine_duplicates)
-        write_quarantine(all_quarantine, f"{quarantine_base_path.rstrip('/')}/{name}")
+        all_quarantine = quarantine_mandatory.unionByName(
+            quarantine_duplicates, allowMissingColumns=True
+        )
+        write_quarantine(
+            all_quarantine,
+            f"{quarantine_base_path.rstrip('/')}/{config['quarantine_path'].lstrip('/')}",
+        )
 
         output_path = (
             f"{output_base_path.rstrip('/')}/{config['output_path'].lstrip('/')}"
