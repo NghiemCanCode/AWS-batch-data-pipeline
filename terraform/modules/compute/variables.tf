@@ -17,3 +17,9 @@ variable "s3_artifacts_bucket" {
   description = "S3 bucket for EMR Serverless artifacts"
   type        = string
 }
+
+variable "custom_image_uri" {
+  description = "Custom Docker image URI from ECR for EMR Serverless (Python 3.12)"
+  type        = string
+  default     = ""
+}
