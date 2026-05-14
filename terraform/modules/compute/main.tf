@@ -4,9 +4,16 @@ resource "aws_emrserverless_application" "emr_serverless_app" {
   type          = var.application_type
 
   maximum_capacity {
-    cpu    = "5 vCPU"
-    memory = "32 GB"
+    cpu    = "12 vCPU"
+    memory = "96 GB"
     disk   = "500 GB"
+  }
+
+  dynamic "image_configuration" {
+    for_each = var.custom_image_uri == "" ? [] : [1]
+    content {
+      image_uri = var.custom_image_uri
+    }
   }
 
   monitoring_configuration {
@@ -14,5 +21,4 @@ resource "aws_emrserverless_application" "emr_serverless_app" {
       log_uri = "s3://${var.s3_artifacts_bucket}/logs/"
     }
   }
-
 }
