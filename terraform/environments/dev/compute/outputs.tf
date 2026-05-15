@@ -3,9 +3,9 @@ output "emr_application_id" {
 }
 
 output "emr_execution_role_arn" {
-  value = module.emr_iam.emr_execution_role_arn
+  value = aws_iam_role.emr_execution_role.arn
 }
 
 output "emr_operation_role_arn" {
-  value = module.emr_iam.emr_operation_role_arn
+  value = aws_iam_role.emr_operation_role.arn
 }

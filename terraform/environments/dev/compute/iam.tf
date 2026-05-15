@@ -1,6 +1,10 @@
+data "aws_caller_identity" "current" {}
+data "aws_region" "current" {}
+
 # ====================================
 # EMR Execution Role
 # ====================================
+
 resource "aws_iam_role" "emr_execution_role" {
   name = "EMRExecutionRoleDev"
   assume_role_policy = jsonencode({
@@ -15,15 +19,14 @@ resource "aws_iam_role" "emr_execution_role" {
         }
         Condition = {
           StringEquals = {
-            "aws:SourceAccount" = var.account_id
-            "aws:SourceArn"     = "arn:aws:emr-serverless:${var.region}:${var.account_id}:/applications/${var.application_id}"
+            "aws:SourceAccount" = data.aws_caller_identity.current.account_id
+            "aws:SourceArn"     = "arn:aws:emr-serverless:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:/applications/${module.emr.emr_sls_app_id}"
           }
         }
-      },
+      }
     ]
   })
 }
-
 
 resource "aws_iam_policy" "emr_s3_access" {
   name        = "EMRServerlessS3AccessDev"
@@ -42,46 +45,12 @@ resource "aws_iam_policy" "emr_s3_access" {
           "s3:GetBucketLocation"
         ]
         Resource = [
-          "arn:aws:s3:::${var.lakehouse_bucket_name}",
-          "arn:aws:s3:::${var.lakehouse_bucket_name}/*",
-
-          "arn:aws:s3:::${var.codebase_bucket_name}",
-          "arn:aws:s3:::${var.codebase_bucket_name}/*",
+          "arn:aws:s3:::${var.data_lake_bucket_name}",
+          "arn:aws:s3:::${var.data_lake_bucket_name}/*",
+          "arn:aws:s3:::${var.code_bucket_name}",
+          "arn:aws:s3:::${var.code_bucket_name}/*",
         ]
       }
-    ]
-  })
-}
-
-
-resource "aws_iam_policy_attachment" "emr_execution_role_attachment" {
-  name       = "EMRExecutionRolePolicyDev"
-  policy_arn = aws_iam_policy.emr_s3_access.arn
-  roles      = [aws_iam_role.emr_execution_role.name]
-}
-
-# ====================================
-# EMR Operation Role
-# ====================================
-
-resource "aws_iam_role" "emr_operation_role" {
-  name = "EMROperationRoleDev"
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Action = "sts:AssumeRole"
-        Effect = "Allow"
-        Sid    = "OperationTrustPolicy"
-        Principal = {
-          Service = "emr-serverless.amazonaws.com"
-        }
-        Condition = {
-          StringEquals = {
-            "aws:SourceAccount" = var.account_id
-          }
-        }
-      },
     ]
   })
 }
@@ -107,10 +76,40 @@ resource "aws_iam_policy" "emr_ecr_access" {
   })
 }
 
-resource "aws_iam_policy_attachment" "emr_ecr_access_attachment" {
-  name       = "EMRExecutionRoleECRPolicyDev"
+resource "aws_iam_role_policy_attachment" "emr_s3_access" {
+  role       = aws_iam_role.emr_execution_role.name
+  policy_arn = aws_iam_policy.emr_s3_access.arn
+}
+
+resource "aws_iam_role_policy_attachment" "emr_ecr_access" {
+  role       = aws_iam_role.emr_execution_role.name
   policy_arn = aws_iam_policy.emr_ecr_access.arn
-  roles      = [aws_iam_role.emr_execution_role.name]
+}
+
+# ====================================
+# EMR Operation Role
+# ====================================
+
+resource "aws_iam_role" "emr_operation_role" {
+  name = "EMROperationRoleDev"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Sid    = "OperationTrustPolicy"
+        Principal = {
+          Service = "emr-serverless.amazonaws.com"
+        }
+        Condition = {
+          StringEquals = {
+            "aws:SourceAccount" = data.aws_caller_identity.current.account_id
+          }
+        }
+      }
+    ]
+  })
 }
 
 resource "aws_iam_policy" "emr_job_submission" {
@@ -140,8 +139,7 @@ resource "aws_iam_policy" "emr_job_submission" {
   })
 }
 
-resource "aws_iam_policy_attachment" "emr_operation_role_attachment" {
-  name       = "EMROperationRolePolicyDev"
+resource "aws_iam_role_policy_attachment" "emr_job_submission" {
+  role       = aws_iam_role.emr_operation_role.name
   policy_arn = aws_iam_policy.emr_job_submission.arn
-  roles      = [aws_iam_role.emr_operation_role.name]
 }
