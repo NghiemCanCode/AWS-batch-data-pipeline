@@ -46,6 +46,7 @@ RUN ${VIRTUAL_ENV}/bin/pip install --no-cache-dir --upgrade pip setuptools wheel
         numpy \
         scipy \
         pandas \
+        pyarrow \
         venv-pack
 
 # (Tùy chọn) Pre-cache dataset của reverse_geocoder để runtime không phải tải lại
