@@ -380,7 +380,7 @@ class TestMaskCardNumCol:
 
 class TestCleanExpiresCol:
     def test_valid_expiry_parsed_to_first_of_month(self, spark):
-        df = make_df(spark, ["03/26"])
+        df = make_df(spark, ["03/2026"])
         result = collect_col(df.withColumn("result", clean_expires_col("value")))
         assert result[0] == date(2026, 3, 1)
 
@@ -395,7 +395,7 @@ class TestCleanExpiresCol:
         assert result == [None]
 
     def test_whitespace_trimmed_before_parse(self, spark):
-        df = make_df(spark, ["  03/26  "])
+        df = make_df(spark, ["  03/2026  "])
         result = collect_col(df.withColumn("result", clean_expires_col("value")))
         assert result[0] == date(2026, 3, 1)
 

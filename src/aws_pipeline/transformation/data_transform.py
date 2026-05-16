@@ -16,7 +16,7 @@ def clean_timestamp_col(column_name: str):
 
 
 def clean_currency_col(column_name: str):
-    return F.regexp_replace(F.col(column_name), r"[$,]", "").try_cast("decimal(18,2)")
+    return F.regexp_replace(F.col(column_name), r"[$,]", "").cast("decimal(18,2)")
 
 
 def clean_bool_col(column_name: str):
@@ -36,9 +36,9 @@ def clean_num_col(column_name: str, num_range: list[int] = None):
         num_1, num_2 = num_range[0], num_range[1]
         return F.when(
             cleaned_col.cast("int").between(num_1, num_2), cleaned_col.cast("int")
-        ).otherwise(F.lit(None).try_cast("int"))
+        ).otherwise(F.lit(None).cast("int"))
     else:
-        return cleaned_col.try_cast("int")
+        return cleaned_col.cast("int")
 
 
 def clean_category_col(column_name: str, category_list: list[str]):
@@ -82,15 +82,13 @@ def clean_zip_col(column_name: str):
 
 def mask_card_num_col(column_name: str):
     """Masks all digits of the card number except the last 4."""
-    card_num = F.col(column_name)
-
-    return F.concat(
-        F.repeat(F.lit("*"), F.length(card_num) - 4), F.substring(card_num, -4, 4)
+    return F.expr(
+        f"concat(repeat('*', length(`{column_name}`) - 4), substr(`{column_name}`, -4, 4))"
     )
 
 
 def clean_expires_col(column_name: str):
-    return F.try_to_date(F.trim(F.col(column_name)), "MM/yy")
+    return F.to_date(F.trim(F.col(column_name)), "MM/yyyy")
 
 
 def clean_cvv_col(column_name: str):

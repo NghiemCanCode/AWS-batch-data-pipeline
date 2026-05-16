@@ -58,6 +58,7 @@ if __name__ == "__main__":
     input_path = _required("INPUT_PATH")
     output_path = _required("OUTPUT_PATH")
     quarantine_path = _required("QUARANTINE_PATH")
+    batch_logical_date = _required("BATCH_LOGICAL_DATE")
     dataset_name = _optional("DATASET")  # None = run all, set by Airflow per task
 
     spark = get_spark_session()
@@ -66,6 +67,7 @@ if __name__ == "__main__":
     logger.info("Input Path:      %s", input_path)
     logger.info("Output Path:     %s", output_path)
     logger.info("Quarantine Path: %s", quarantine_path)
+    logger.info("Batch Logical Date: %s", batch_logical_date)
     logger.info("Dataset:         %s", dataset_name or "all")
 
     try:
@@ -84,10 +86,11 @@ if __name__ == "__main__":
                 input_path,
                 output_path,
                 quarantine_path,
+                batch_logical_date
             )
         else:
             # Local dev fallback — runs all datasets sequentially
-            process_bronze_to_silver(spark, input_path, output_path, quarantine_path)
+            process_bronze_to_silver(spark, input_path, output_path, quarantine_path, batch_logical_date)
 
         logger.info("Job finished successfully.")
     except Exception as e:

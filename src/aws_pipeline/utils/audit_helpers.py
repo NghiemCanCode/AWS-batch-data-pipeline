@@ -28,7 +28,7 @@ def schema_enforcing(df: DataFrame, schema: StructType) -> DataFrame:
                 f"→ applying try_cast."
             )
             select_cols.append(
-                F.col(field.name).try_cast(field.dataType).alias(field.name)
+                F.expr(f"try_cast(`{field.name}` as {field.dataType.simpleString()})").alias(field.name)
             )
 
     return df.select(select_cols)
