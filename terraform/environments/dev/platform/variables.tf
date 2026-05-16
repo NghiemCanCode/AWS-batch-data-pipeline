@@ -17,3 +17,8 @@ variable "ecr_registry_name" {
   description = "ECR repository name"
   type        = string
 }
+
+variable "github_repo" {
+  description = "GitHub repository in owner/repo format, e.g. NghiemCanCode/AWS-batch-data-pipeline"
+  type        = string
+}

@@ -222,7 +222,7 @@ AccountTransactionFactSchema = StructType(
         StructField("transaction_amount", DecimalType(18, 2), False),
         StructField(
             "zip_code", StringType(), True
-        ),  # Merchant zip code, thay đổi mỗi lần giao dịch tùy theo chi nhánh
+        ),  # Merchant zip code, varies per transaction depending on branch
     ]
     + SYSTEM_AUDIT_COLUMNS
 )

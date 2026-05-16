@@ -80,7 +80,7 @@ def generate_date_dim(
         .withColumn("day_of_month", F.dayofmonth(F.col("full_date")))
         .withColumn("day_of_year", F.dayofyear(F.col("full_date")))
         .withColumn("week_of_month", _calculate_week_of_month_col("full_date"))
-        .withColumn("week_of_year", F.weekofyear(F.col("full_date")))
+        .withColumn("week_of_year", F.date_format(F.col("full_date"), "w").cast("short"))
         .withColumn("month", F.month(F.col("full_date")))
         .withColumn("quarter", F.quarter(F.col("full_date")))
         .withColumn("year", F.year(F.col("full_date")))

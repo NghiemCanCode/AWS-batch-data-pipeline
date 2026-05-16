@@ -1,13 +1,3 @@
-variable "account_id" {
-  description = "AWS account id"
-  type        = string
-}
-
-variable "region" {
-  description = "Main region of AWS resources"
-  type        = string
-}
-
 variable "emr_app_name" {
   description = "Name of EMR Serverless application (without -dev suffix)"
   type        = string
@@ -37,4 +27,9 @@ variable "custom_image_uri" {
   description = "Custom Docker image URI from ECR for EMR Serverless"
   type        = string
   default     = ""
+}
+
+variable "region" {
+  description = "AWS Region"
+  type        = string
 }

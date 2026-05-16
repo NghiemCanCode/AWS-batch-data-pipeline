@@ -26,17 +26,16 @@ sys.path.append(
 from unittest.mock import patch
 
 from aws_pipeline.transformation.bronze_to_silver import (
-    schema_enforcing,
     audit_mandatory_columns,
     audit_duplicates,
     transform_transactions,
     transform_cards,
     transform_users,
     transform_mcc,
-    add_audit_columns,
     _run_dataset,
     DATASETS,
 )
+from aws_pipeline.utils.audit_helpers import schema_enforcing, add_audit_columns
 from aws_pipeline.schemas.silver_schema import (
     TransactionsSilverSchema,
     CardsSilverSchema,
@@ -371,12 +370,12 @@ class TestTransformCards:
             "card_brand": "Visa",
             "card_type": "Credit",
             "card_number": "1234567890",
-            "expires": "12/25",
+            "expires": "12/2025",
             "cvv": "123",
             "use_chip": "TRUE",
             "num_cards_issued": "1",
             "credit_limit": "$5,000.00",
-            "acct_open_date": "01/20",
+            "acct_open_date": "01/2020",
             "year_pin_last_changed": "2023",
             "card_on_dark_web": "FALSE",
         }
@@ -549,9 +548,11 @@ class TestAddAuditColumns:
         "_is_deleted",
     ]
 
+    _BATCH_DATE = "2026-01-01"
+
     def test_adds_all_six_audit_columns(self, spark):
         df = spark.createDataFrame([("1",)], ["id"])
-        result = add_audit_columns(df)
+        result = add_audit_columns(df, self._BATCH_DATE)
 
         for col in self.EXPECTED_AUDIT_COLS:
             assert col in result.columns, f"Missing audit column: {col}"
@@ -564,7 +565,7 @@ class TestAddAuditColumns:
             ]
         )
         df = spark.createDataFrame([("1", "hello")], schema)
-        result = add_audit_columns(df)
+        result = add_audit_columns(df, self._BATCH_DATE)
 
         assert "id" in result.columns
         assert "name" in result.columns
@@ -572,7 +573,7 @@ class TestAddAuditColumns:
 
     def test_timestamps_are_not_null(self, spark):
         df = spark.createDataFrame([("1",)], ["id"])
-        row = add_audit_columns(df).collect()[0]
+        row = add_audit_columns(df, self._BATCH_DATE).collect()[0]
 
         assert row["_created_at"] is not None
         assert row["_updated_at"] is not None
@@ -580,13 +581,13 @@ class TestAddAuditColumns:
 
     def test_processing_id_is_not_null(self, spark):
         df = spark.createDataFrame([("1",)], ["id"])
-        row = add_audit_columns(df).collect()[0]
+        row = add_audit_columns(df, self._BATCH_DATE).collect()[0]
 
         assert row["_processing_id"] is not None
 
     def test_is_deleted_defaults_to_false(self, spark):
         df = spark.createDataFrame([("1",)], ["id"])
-        row = add_audit_columns(df).collect()[0]
+        row = add_audit_columns(df, self._BATCH_DATE).collect()[0]
 
         assert row["_is_deleted"] is False
 
@@ -656,6 +657,7 @@ class TestRunDatasetMcc:
                 input_base_path="s3://fake-bucket/",
                 output_base_path=output_base,
                 quarantine_base_path=quarantine_base,
+                batch_logical_date="2026-01-01",
             )
 
         result = spark.read.parquet(f"{output_base}/silver/mcc")
@@ -681,6 +683,7 @@ class TestRunDatasetMcc:
                 input_base_path="s3://fake-bucket/",
                 output_base_path=output_base,
                 quarantine_base_path=quarantine_base,
+                batch_logical_date="2026-01-01",
             )
 
         quarantine = spark.read.parquet(f"{quarantine_base}/mcc")

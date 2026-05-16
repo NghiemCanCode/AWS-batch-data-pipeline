@@ -26,6 +26,7 @@ from pyspark.sql import functions as F
 from pyspark.sql.types import StringType, StructField, StructType
 import logging
 
+from ..utils.audit_helpers import schema_enforcing, add_audit_columns
 from .load_data_source import read_bronze_csv, read_bronze_json
 from .data_transform import (
     clean_category_col,
@@ -135,35 +136,6 @@ def audit_duplicates(
     return clean_df, quarantine_df
 
 
-# --- SCHEMA ENFORCING ---
-
-
-def schema_enforcing(df: DataFrame, schema: StructType) -> DataFrame:
-    select_cols = []
-
-    for field in schema.fields:
-        if field.name not in df.columns:
-            logger.warning(
-                f"[SCHEMA] Column '{field.name}' missing → inserting NULL as {field.dataType}."
-            )
-            select_cols.append(F.lit(None).cast(field.dataType).alias(field.name))
-
-        elif df.schema[field.name].dataType == field.dataType:
-            select_cols.append(F.col(field.name))
-
-        else:
-            logger.warning(
-                f"[SCHEMA] Column '{field.name}': "
-                f"expected {field.dataType}, got {df.schema[field.name].dataType} "
-                f"→ applying try_cast."
-            )
-            select_cols.append(
-                F.col(field.name).try_cast(field.dataType).alias(field.name)
-            )
-
-    return df.select(select_cols)
-
-
 # --- WRITE ---
 
 
@@ -180,20 +152,21 @@ def upsert_partition(
 
     spark = batch_df.sparkSession
 
-    affected_partitions_df = batch_df.select(*partition_cols).distinct()
-
-    if affected_partitions_df.isEmpty():
-        logger.warning("[UPSERT] No affected partitions found.")
-        return
-
     try:
-        silver_affected = spark.read.parquet(silver_path).join(
-            affected_partitions_df, on=partition_cols, how="left_semi"
-        )
+        existing_silver = spark.read.parquet(silver_path)
+        if partition_cols:
+            affected_partitions_df = batch_df.select(*partition_cols).distinct()
+            if affected_partitions_df.isEmpty():
+                logger.warning("[UPSERT] No affected partitions found.")
+                return
+            silver_affected = existing_silver.join(
+                affected_partitions_df, on=partition_cols, how="left_semi"
+            )
+        else:
+            silver_affected = existing_silver
     except AnalysisException:
         # TODO: Catch Not found silver table, not all AnalysisException
-
-        logger.warning("[UPSERT] Silver table chưa tồn tại, sẽ tạo mới.")
+        logger.warning("[UPSERT] Silver table not found, will create new.")
         silver_affected = spark.createDataFrame([], schema=target_schema)
 
     window = Window.partitionBy(id_col).orderBy(F.col(timestamp_col).desc())
@@ -205,19 +178,20 @@ def upsert_partition(
     )
 
     writer = merged_df
-    if n_output_files:
+    if n_output_files and partition_cols:
         writer = merged_df.repartition(n_output_files, *partition_cols)
 
-    (
-        writer.write.mode("overwrite")
-        .format("parquet")
-        .partitionBy(*partition_cols)
-        .save(silver_path)
-    )
+    w = writer.write.mode("overwrite").format("parquet")
+    if partition_cols:
+        w = w.partitionBy(*partition_cols)
+    w.save(silver_path)
 
-    logger.info(
-        f"[UPSERT] Overwrite {affected_partitions_df.count()} partition(s) → {silver_path}"
-    )
+    if partition_cols:
+        logger.info(
+            f"[UPSERT] Overwrite {affected_partitions_df.count()} partition(s) → {silver_path}"
+        )
+    else:
+        logger.info(f"[UPSERT] Overwrite (no partitions) → {silver_path}")
 
 
 def write_quarantine(df: DataFrame, path: str) -> None:
@@ -340,17 +314,16 @@ def transform_mcc(df: DataFrame) -> DataFrame:
     return schema_enforcing(df_unpivoted, MccSilverSchema)
 
 
-def add_audit_columns(df: DataFrame) -> DataFrame:
-    app_id = df.sparkSession.sparkContext.applicationId
-    now = F.current_timestamp()
-    return (
-        df.withColumn("_created_at", now)
-        .withColumn("_source_file", F.input_file_name())
-        .withColumn("_processing_id", F.lit(app_id))
-        .withColumn("_updated_at", now)
-        .withColumn("_batch_logical_date", now)
-        .withColumn("_is_deleted", F.lit(False))
-    )
+_QUARANTINE_META_COLS = frozenset(
+    {"_quarantine_source", "_quarantine_reason", "_quarantine_null_cols", "_quarantine_ts"}
+)
+
+
+def _stringify_quarantine(df: DataFrame) -> DataFrame:
+    return df.select([
+        F.col(c) if c in _QUARANTINE_META_COLS else F.col(c).cast("string").alias(c)
+        for c in df.columns
+    ])
 
 
 DATASETS = {
@@ -444,6 +417,7 @@ def _run_dataset(
     input_base_path: str,
     output_base_path: str,
     quarantine_base_path: str,
+    batch_logical_date: str,
 ) -> None:
     """Based on Audit-Write-Audit-Publish pattern, but smaller"""
     after_mandatory = quarantine_mandatory = after_dedup = quarantine_duplicates = None
@@ -473,10 +447,10 @@ def _run_dataset(
             after_dedup = silver_df
             quarantine_duplicates = raw_df.limit(0)
 
-        clean_df = add_audit_columns(after_dedup)
+        clean_df = add_audit_columns(after_dedup, batch_logical_date)
 
-        all_quarantine = quarantine_mandatory.unionByName(
-            quarantine_duplicates, allowMissingColumns=True
+        all_quarantine = _stringify_quarantine(quarantine_mandatory).unionByName(
+            _stringify_quarantine(quarantine_duplicates), allowMissingColumns=True
         )
         write_quarantine(
             all_quarantine,
@@ -509,12 +483,15 @@ def process_bronze_to_silver(
     input_base_path: str,
     output_base_path: str,
     quarantine_base_path: str,
+    batch_logical_date: str,
 ) -> None:
     """Orchestrates the bronze-to-silver transformation for all datasets."""
     spark.conf.set("spark.sql.sources.partitionOverwriteMode", "dynamic")
+    spark.conf.set("spark.sql.legacy.timeParserPolicy", "CORRECTED")
 
     for name, config in DATASETS.items():
         logger.info("Processing dataset: %s", name)
         _run_dataset(
-            spark, name, config, input_base_path, output_base_path, quarantine_base_path
+            spark, name, config, input_base_path, output_base_path,
+            quarantine_base_path, batch_logical_date,
         )
