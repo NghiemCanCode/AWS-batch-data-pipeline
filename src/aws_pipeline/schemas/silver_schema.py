@@ -1,3 +1,10 @@
+# NOTE:
+# Silver schemas are data contracts: column names, Spark data types, nullable
+# behavior, and governance tags should stay version-controlled here.
+# Business/domain validation rules such as valid ranges, allowed category
+# values, temporal constraints, and scoring thresholds should live in a
+# rules/config loader instead of being embedded in schema definitions.
+
 from pyspark.sql.types import (
     StructType,
     StructField,
@@ -73,7 +80,9 @@ UsersSilverSchema = StructType(
         StructField("per_capita_income", DecimalType(18, 2), True),  # [PII]
         StructField("yearly_income", DecimalType(18, 2), True),  # [PII]
         StructField("total_debt", DecimalType(18, 2), True),
-        StructField("credit_score", IntegerType(), True),  # [PII]
+        # [PII], FICO Score range
+        StructField("credit_score", IntegerType(), True),
+        # [0, 100] (may be user can have 0 card) 
         StructField("num_credit_cards", IntegerType(), True),
     ]
     + SYSTEM_AUDIT_COLUMNS
