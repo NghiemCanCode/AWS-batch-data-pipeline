@@ -57,5 +57,5 @@ dist/
 # Pytest
 .pytest_cache
 
-
-.agent/
+# Agent skill
+.agents/
