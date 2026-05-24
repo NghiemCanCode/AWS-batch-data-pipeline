@@ -1,6 +1,8 @@
 import sys
 import os
 
+from pyspark.sql import functions as F
+
 from test.utils.helpers import make_df, collect_col
 
 from src.aws_pipeline.aggregation.dim_processing.time_dim import (
@@ -16,6 +18,7 @@ from src.aws_pipeline.aggregation.dim_processing.time_dim import (
     _display_bucket_time_col,
     _calculate_day_part_col,
 )
+from src.aws_pipeline.schemas.gold_schema import TimeDimensionSchema
 
 sys.path.append(
     os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../src"))
@@ -263,6 +266,112 @@ class TestCalculateDayPartCol:
 
 
 class TestGenerateTimeDim:
-    def test_generate_time_dim(self, spark):
-        df = generate_time_dim(spark, "2026-04-04")
-        df.show(2)
+    def test_schema_grain_and_boundary_values(self, spark):
+        result_df = generate_time_dim(spark, "2026-04-04 00:00:00")
+
+        assert result_df.schema == TimeDimensionSchema
+        assert result_df.count() == 86400
+        assert result_df.select("time_key").distinct().count() == 86400
+
+        result = (
+            result_df.filter(
+                F.col("time_key").isin(0, 120000, 235959)
+            )
+            .orderBy("time_key")
+            .select(
+                "time_key",
+                "time_24h",
+                "hour_24",
+                "hour_12",
+                "am_pm",
+                "minute",
+                "second",
+                "time_bucket_15min",
+                "time_bucket_30min",
+                "time_bucket_hourly",
+                "time_bucket_15min_str",
+                "time_bucket_30min_str",
+                "time_bucket_hourly_str",
+                "day_part",
+                "_batch_logical_date",
+                "_is_deleted",
+            )
+            .collect()
+        )
+
+        assert [
+            (
+                row["time_key"],
+                row["time_24h"],
+                row["hour_24"],
+                row["hour_12"],
+                row["am_pm"],
+                row["minute"],
+                row["second"],
+                row["time_bucket_15min"],
+                row["time_bucket_30min"],
+                row["time_bucket_hourly"],
+                row["time_bucket_15min_str"],
+                row["time_bucket_30min_str"],
+                row["time_bucket_hourly_str"],
+                row["day_part"],
+                row["_batch_logical_date"].isoformat(sep=" "),
+                row["_is_deleted"],
+            )
+            for row in result
+        ] == [
+            (
+                0,
+                "00:00:00",
+                0,
+                12,
+                "AM",
+                0,
+                0,
+                0,
+                0,
+                0,
+                "00:00",
+                "00:00",
+                "00:00",
+                "Early Night",
+                "2026-04-04 00:00:00",
+                False,
+            ),
+            (
+                120000,
+                "12:00:00",
+                12,
+                12,
+                "PM",
+                0,
+                0,
+                1200,
+                1200,
+                1200,
+                "12:00",
+                "12:00",
+                "12:00",
+                "Afternoon",
+                "2026-04-04 00:00:00",
+                False,
+            ),
+            (
+                235959,
+                "23:59:59",
+                23,
+                11,
+                "PM",
+                59,
+                59,
+                2345,
+                2330,
+                2300,
+                "23:45",
+                "23:30",
+                "23:00",
+                "Night",
+                "2026-04-04 00:00:00",
+                False,
+            ),
+        ]
