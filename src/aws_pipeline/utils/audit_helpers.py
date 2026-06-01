@@ -31,7 +31,8 @@ def schema_enforcing(df: DataFrame, schema: StructType) -> DataFrame:
                 F.expr(f"try_cast(`{field.name}` as {field.dataType.simpleString()})").alias(field.name)
             )
 
-    return df.select(select_cols)
+    enforced_df = df.select(select_cols)
+    return df.sparkSession.createDataFrame(enforced_df.rdd, schema)
 
 
 def add_audit_columns(df: DataFrame, batch_logical_date: str) -> DataFrame:

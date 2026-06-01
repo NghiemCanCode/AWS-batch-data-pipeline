@@ -19,11 +19,15 @@ def _calculate_time_key_col(column_name: str) -> Column:
 
 def _calculate_time_24h_col(column_name: str) -> Column:
     return F.concat(
-        F.lpad(F.floor(F.col(column_name) / F.lit(10000)), 2, "0"),
+        F.lpad(F.floor(F.col(column_name) / F.lit(10000)).cast("int"), 2, "0"),
         F.lit(":"),
-        F.lpad(F.floor(((F.col(column_name) % F.lit(10000)) / F.lit(100))), 2, "0"),
+        F.lpad(
+            F.floor(((F.col(column_name) % F.lit(10000)) / F.lit(100))).cast("int"),
+            2,
+            "0",
+        ),
         F.lit(":"),
-        F.lpad((F.col(column_name) % F.lit(100)), 2, "0"),
+        F.lpad((F.col(column_name) % F.lit(100)).cast("int"), 2, "0"),
     )
 
 
@@ -66,9 +70,9 @@ def _calculate_time_bucket_col(column_name: str, bucket_size: int) -> Column:
 
 def _display_bucket_time_col(bucket_col_name: str) -> Column:
     return F.concat(
-        F.lpad(F.floor(F.col(bucket_col_name) / F.lit(100)), 2, "0"),
+        F.lpad(F.floor(F.col(bucket_col_name) / F.lit(100)).cast("int"), 2, "0"),
         F.lit(":"),
-        F.lpad(F.floor(F.col(bucket_col_name) % F.lit(100)), 2, "0"),
+        F.lpad(F.floor(F.col(bucket_col_name) % F.lit(100)).cast("int"), 2, "0"),
     )
 
 

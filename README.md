@@ -55,10 +55,6 @@ AWS-batch-data-pipeline/
 │   │    └── bronze_to_silver.py     # Audit, transform, write orchestration
 │   └── aggregation/                # Gold transformation folder
 │       ├── ...
-├── test/
-│   └── unit_tests/
-│       ├── schemas/                # Schema validation tests
-│       └── transformation/         # Transform & pipeline unit tests for Silver layer
 ├── terraform/
 │   ├── environments/dev/           # Dev environment S3 buckets
 │   └── modules/storage/            # Reusable S3 module
@@ -94,14 +90,6 @@ AWS-batch-data-pipeline/
 ```bash
 
 ```
-
-### Run Unit Tests
-
-```bash
-pytest test/
-```
-
----
 
 ## Running the Pipeline
 
@@ -303,7 +291,7 @@ Expose the Gold layer to downstream consumers through a performant, low-maintena
 Harden the pipeline against transient infrastructure failures and partial-write corruption so that no manual intervention is required for recoverable errors.
 
 - [ ] **Spark job retry strategy** — configure EMR Serverless job retries with exponential backoff and jitter; distinguish retriable failures (spot interruption, throttling) from non-retriable ones (schema mismatch, DQ violation) to avoid wasting capacity on guaranteed-to-fail retries
-- [ ] **Idempotent writes** — ensure every transform job can be safely re-run for the same `_processing_id` without producing duplicate records; enforce this as a contract validated in unit tests
+- [ ] **Idempotent writes** — ensure every transform job can be safely re-run for the same `_processing_id` without producing duplicate records; enforce this as a delivery contract in the chosen validation approach
 - [ ] **Partial-write guard** — implement a write-then-rename pattern (write to a `_tmp/` S3 prefix, atomic rename on success) so that a mid-job failure never leaves a partially committed partition visible to downstream readers
 - [ ] **Dead-letter queue (DLQ)** — route records that fail schema validation or transformation to a dedicated S3 DLQ prefix, preserving raw payloads for offline investigation and selective replay
 - [ ] **Checkpoint & resume for large datasets** — record per-partition completion state to DynamoDB or S3; on restart, skip already-committed partitions rather than reprocessing the entire batch
@@ -317,7 +305,6 @@ Harden the pipeline against transient infrastructure failures and partial-write 
 Automate the full delivery lifecycle — from a passing test suite to a deployed job in production.
 
 - [ ] **Continuous Integration** — run on every pull request targeting `main`:
-  - [ ] Unit tests (`pytest`) with coverage threshold enforcement
   - [ ] Code linting and formatting checks (`ruff` / `black`)
   - [ ] Terraform `plan` diff posted as a PR comment for infrastructure changes
 - [ ] **Continuous Delivery — application code:**
