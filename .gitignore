@@ -1,4 +1,5 @@
 .env
+scripts/.env.runtime
 .venv/
 ### Terraform ###
 # Local .terraform directories

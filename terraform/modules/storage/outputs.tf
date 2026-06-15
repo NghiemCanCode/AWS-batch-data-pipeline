@@ -1,7 +1,14 @@
 output "bucket_name" {
-  value = aws_s3_bucket.bucket.id
+  description = "S3 bucket name."
+  value       = aws_s3_bucket.bucket.id
 }
 
 output "bucket_arn" {
-  value = aws_s3_bucket.bucket.arn
+  description = "S3 bucket ARN."
+  value       = aws_s3_bucket.bucket.arn
+}
+
+output "bucket_uri" {
+  description = "S3 bucket URI."
+  value       = "s3://${aws_s3_bucket.bucket.id}"
 }
