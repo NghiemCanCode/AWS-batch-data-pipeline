@@ -21,18 +21,22 @@ from .dim_processing.merchant_dim import process_merchant_dim
 from .dim_processing.time_dim import generate_time_dim
 from .dim_processing.transaction_type_dim import process_transaction_type_dim
 from .dim_processing.trans_error_type_dim import process_trans_error_type_dim
-from ..quality.awap.common import (
+from ..quality.awap_deprecated.common import (
     DASHBOARD_REFRESH_SLA_MINUTES,
     read_table_or_path,
     validate_window_sla,
 )
-from ..quality.awap.contracts import (
+from ..quality.awap_deprecated.contracts import (
     GoldDatasetContract,
-    GoldLoadStrategy,
-    ReconciliationRule,
-    RefreshCadence,
+    GoldRunContext,
 )
-from ..quality.awap.runner import audit_publish_dataset, audit_write_dataset
+from ..quality.awap_deprecated.publisher import (
+    configure_gold_iceberg_catalog,
+    published_table_identifier,
+    read_staging_dataset,
+    staging_table_identifier,
+)
+from ..quality.awap_deprecated.runner import audit_publish_dataset, audit_write_dataset
 from ..quality.audit_log import AuditLogContext, quality_audit_log_path
 from .fact_processing.account_monthly_snapshot_fact import (
     process_account_monthly_snapshot_fact,
@@ -80,11 +84,11 @@ def _source_path(input_base_path: str, source_name: str) -> str:
 
 
 def _gold_path(output_base_path: str, contract: GoldDatasetContract) -> str:
-    return f"{output_base_path.rstrip('/')}/{contract.publish_path.lstrip('/')}"
+    return published_table_identifier(contract)
 
 
 def _staging_path(output_base_path: str, contract: GoldDatasetContract) -> str:
-    return f"{output_base_path.rstrip('/')}/{contract.staging_path.lstrip('/')}"
+    return staging_table_identifier(contract)
 
 
 def _read_sources(
@@ -124,9 +128,9 @@ def _read_dependencies(
             continue
 
         dependency_contract = DATASETS[dependency_name]
-        dependencies[dependency_name] = read_table_or_path(
-            spark,
-            _gold_path(output_base_path, dependency_contract),
+        configure_gold_iceberg_catalog(spark, output_base_path)
+        dependencies[dependency_name] = spark.table(
+            _gold_path(output_base_path, dependency_contract)
         )
 
     return dependencies
@@ -402,7 +406,14 @@ def build_staging_for_dataset(
         batch_logical_date,
         options,
     )
-    audit_write_dataset(staging_df, output_base_path, contract)
+    run_context = _build_gold_run_context(spark, batch_logical_date, options)
+    options["_gold_run_context"] = run_context
+    _, staging_df = audit_write_dataset(
+        staging_df,
+        output_base_path,
+        contract,
+        run_context,
+    )
     return staging_df, sources
 
 
@@ -451,6 +462,13 @@ def publish_dataset(
 
     options = options or {}
     contract = DATASETS[dataset_name]
+    run_context = options.get("_gold_run_context")
+    if run_context is None:
+        run_context = _build_gold_run_context(
+            staging_df.sparkSession,
+            batch_logical_date or options.get("batch_logical_date"),
+            options,
+        )
     audit_context = _build_audit_log_context(
         dataset_name=dataset_name,
         contract=contract,
@@ -463,6 +481,7 @@ def publish_dataset(
         staging_df=staging_df,
         output_base_path=output_base_path,
         contract=contract,
+        run_context=run_context,
         source_dfs=source_dfs,
         audit_log_context=audit_context,
         audit_log_path=quality_audit_log_path(output_base_path),
@@ -492,6 +511,26 @@ def _build_audit_log_context(
     )
 
 
+def _build_gold_run_context(
+    spark: SparkSession,
+    batch_logical_date: str | None,
+    options: dict,
+) -> GoldRunContext:
+    """
+    Business rule: every Gold staging/publish attempt must be traceable to one
+    logical pipeline run and, for dashboard datasets, one bounded refresh window.
+    """
+    if not batch_logical_date:
+        raise ValueError("Gold run context requires batch_logical_date")
+
+    return GoldRunContext.from_spark(
+        spark=spark,
+        batch_logical_date=batch_logical_date,
+        window_start=options.get("window_start"),
+        window_end=options.get("window_end"),
+    )
+
+
 def publish_dataset_from_staging(
     spark: SparkSession,
     dataset_name: str,
@@ -513,7 +552,7 @@ def publish_dataset_from_staging(
     contract = DATASETS[dataset_name]
     _enforce_dashboard_sla(dataset_name, options)
 
-    staging_df = read_table_or_path(spark, _staging_path(output_base_path, contract))
+    staging_df = read_staging_dataset(spark, output_base_path, contract)
     source_dfs = _read_sources(spark, contract, input_base_path, options)
 
     return publish_dataset(

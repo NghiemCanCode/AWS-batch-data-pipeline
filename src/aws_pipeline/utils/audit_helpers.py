@@ -8,6 +8,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+# TODO(schema-control): Legacy Bronze/Silver helper. Do not reintroduce this in
+# Silver->Gold. It silently repairs contract failures by inserting NULLs and
+# try_casting bad types; Gold should use explicit builder casts plus a strict
+# AWAP schema-contract audit gate before publish.
 def schema_enforcing(df: DataFrame, schema: StructType) -> DataFrame:
     select_cols = []
 

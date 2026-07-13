@@ -1,11 +1,13 @@
 from pyspark.sql import DataFrame, functions as F
 
-from ...schemas.gold_schema import AccountOwnerFactlessSchema
-from ...utils.audit_helpers import add_audit_columns, schema_enforcing
-
 
 _ACCOUNT_CUSTOMER_KEY_CANDIDATES = ("customer_key", "customer_id", "client_id", "user_id")
 _ACCOUNT_ID_CANDIDATES = ("account_id", "card_id")
+
+
+def _normalized_join_col(column_name: str):
+    trimmed_col = F.trim(F.col(column_name).cast("string"))
+    return F.upper(F.when(trimmed_col == F.lit(""), F.lit(None)).otherwise(trimmed_col))
 
 
 def _resolve_account_customer_column(account_dim_df: DataFrame) -> str:
@@ -36,6 +38,14 @@ def process_account_owner_factless(
     batch_logical_date,
     account_owner_source_df: DataFrame | None = None,
 ) -> DataFrame:
+    """
+    Build account-customer ownership pairs.
+
+    Business rule: card ownership is treated as a latest-state relationship for
+    the operational Gold dashboard, using only current customer/account SCD2
+    versions. Joins normalize ids because source ids can arrive as strings or
+    numbers depending on CSV inference and Spark casting.
+    """
     ownership_source_df = (
         account_owner_source_df if account_owner_source_df is not None else account_dim_df
     )
@@ -48,21 +58,21 @@ def process_account_owner_factless(
     if customer_join_column not in customer_dim_df.columns:
         raise ValueError(f"customer_dim_df must include '{customer_join_column}'")
 
-    account = account_dim_df.alias("account")
-    customer = customer_dim_df.alias("customer")
+    account = account_dim_df.where(F.col("is_current").cast("boolean")).alias("account")
+    customer = customer_dim_df.where(F.col("is_current").cast("boolean")).alias("customer")
     ownership_source = ownership_source_df.alias("ownership_source")
 
     ownership_pairs = (
         ownership_source.join(
             account,
-            F.col(f"ownership_source.{ownership_account_column}")
-            == F.col("account.account_id"),
+            _normalized_join_col(f"ownership_source.{ownership_account_column}")
+            == _normalized_join_col("account.account_id"),
             "inner",
         )
         .join(
             customer,
-            F.col(f"ownership_source.{account_customer_column}")
-            == F.col(f"customer.{customer_join_column}"),
+            _normalized_join_col(f"ownership_source.{account_customer_column}")
+            == _normalized_join_col(f"customer.{customer_join_column}"),
             "inner",
         )
         .where(
@@ -96,5 +106,4 @@ def process_account_owner_factless(
         )
     )
 
-    ownership_pairs = add_audit_columns(ownership_pairs, batch_logical_date)
-    return schema_enforcing(ownership_pairs, AccountOwnerFactlessSchema)
+    return ownership_pairs

@@ -1,8 +1,5 @@
 from pyspark.sql import Column, DataFrame, functions as F
 
-from ...schemas.gold_schema import TransErrorTypeDimensionSchema
-from ...utils.audit_helpers import add_audit_columns, schema_enforcing
-
 
 NO_ERROR_TYPE = "No Error"
 NO_ERROR_TYPE_KEY = 0
@@ -33,6 +30,10 @@ def process_trans_error_type_dim(
 ) -> DataFrame:
     """
     Build the Transaction Error Type dimension from the Transactions silver DataFrame.
+
+    Business rule: null or empty error arrays are mapped to the governed
+    "No Error" member with key 0 so success metrics can join without special
+    BI-side null handling.
     """
     errors_for_dimension = F.when(
         F.size(F.col("errors")) > F.lit(0),
@@ -48,13 +49,6 @@ def process_trans_error_type_dim(
         )
         .select("trans_error_type_key", "trans_error_type")
         .distinct()
-    )
-
-    trans_error_type_dim_df = add_audit_columns(
-        trans_error_type_dim_df, batch_logical_date
-    )
-    trans_error_type_dim_df = schema_enforcing(
-        trans_error_type_dim_df, TransErrorTypeDimensionSchema
     )
 
     return trans_error_type_dim_df

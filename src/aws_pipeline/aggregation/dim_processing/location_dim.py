@@ -2,9 +2,6 @@ from functools import reduce
 
 from pyspark.sql import DataFrame, functions as F
 
-from ...schemas.gold_schema import LocationDimensionSchema
-from ...utils.audit_helpers import add_audit_columns, schema_enforcing
-
 
 LOCATION_COLUMN_PAIRS = (
     ("city", "state"),
@@ -44,6 +41,11 @@ def _location_key_col(city_col: str, state_col: str) -> F.col:
 
 
 def process_location_dim(batch_logical_date, *dfs: DataFrame) -> DataFrame:
+    """
+    Business rule: Gold uses one conformed city/state dimension for customer and
+    merchant locations. It is Type 1 CDC by location_key because source location
+    parsing can be corrected without preserving a row-version history.
+    """
     if not dfs:
         raise ValueError("At least one source DataFrame is required to build Location dimension.")
 
@@ -70,8 +72,5 @@ def process_location_dim(batch_logical_date, *dfs: DataFrame) -> DataFrame:
         .select("location_key", "city", "state")
         .distinct()
     )
-
-    location_dim_df = add_audit_columns(location_dim_df, batch_logical_date)
-    location_dim_df = schema_enforcing(location_dim_df, LocationDimensionSchema)
 
     return location_dim_df

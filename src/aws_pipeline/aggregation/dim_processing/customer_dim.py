@@ -1,8 +1,5 @@
 from pyspark.sql import DataFrame, functions as F
 
-from ...schemas.gold_schema import CustomerDimensionSchema
-from ...utils.audit_helpers import add_audit_columns, schema_enforcing
-
 
 HIGH_EFFECTIVE_TO_DATE = "9999-12-31 23:59:59"
 
@@ -28,6 +25,11 @@ def _address_key_col(city_col: str, state_col: str) -> F.col:
 def process_customer_dim(users_df: DataFrame, batch_logical_date) -> DataFrame:
     """
     Build the Customer dimension from the Users silver DataFrame.
+
+    Business rule: Gold customer attributes support both 5-minute dashboards and
+    periodic spend analytics. We track Type 2 history only for attributes that
+    change business interpretation over time: income_bracket and address_key.
+    Static/profile attributes remain Type 1 corrections in upstream Silver.
     """
     effective_from_date = F.to_timestamp(F.lit(batch_logical_date))
 
@@ -37,8 +39,9 @@ def process_customer_dim(users_df: DataFrame, batch_logical_date) -> DataFrame:
         .withColumn(
             "customer_key",
             F.md5(
-                F.concat(
-                    F.col("customer_id"),
+                F.concat_ws(
+                    "||",
+                    F.col("customer_id").cast("string"),
                     F.col("effective_from_date").cast("string"),
                 )
             ),
@@ -48,9 +51,20 @@ def process_customer_dim(users_df: DataFrame, batch_logical_date) -> DataFrame:
         .withColumn("effective_to_date", F.to_timestamp(F.lit(HIGH_EFFECTIVE_TO_DATE)))
         .withColumn("is_current", F.lit(True))
         .withColumn("version_number", F.lit(1))
+        .select(
+            "customer_key",
+            "customer_id",
+            "retirement_age",
+            "birth_month",
+            "birth_year",
+            "gender",
+            "income_bracket",
+            "address_key",
+            "effective_from_date",
+            "effective_to_date",
+            "is_current",
+            "version_number",
+        )
     )
-
-    customer_dim_df = add_audit_columns(customer_dim_df, batch_logical_date)
-    customer_dim_df = schema_enforcing(customer_dim_df, CustomerDimensionSchema)
 
     return customer_dim_df

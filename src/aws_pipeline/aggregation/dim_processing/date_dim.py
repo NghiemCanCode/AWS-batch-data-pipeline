@@ -6,16 +6,19 @@ from datetime import datetime
 
 import holidays
 from pyspark.sql import SparkSession, DataFrame, Column, functions as F
-
-from ...utils.audit_helpers import schema_enforcing, add_audit_columns
-from ...schemas.gold_schema import DateDimensionSchema
+from pyspark.sql.types import (
+    StructType,
+    StructField,
+    StringType,
+    TimestampNTZType,
+    DecimalType,
+    IntegerType,
+    DateType,
+    BooleanType,
+    ShortType,
+)
 
 DATE_FORMAT = "%Y-%m-%d"
-
-
-def _calculate_week_of_month_col(column_name: str) -> Column:
-    return F.ceil(F.dayofmonth(F.col(column_name)) / 7).cast("short")
-
 
 def _calculate_is_weekend_col(column_name: str) -> Column:
     return F.when(
@@ -40,6 +43,10 @@ def generate_date_dim(
 ) -> DataFrame:
     """
     Generate a date dimension table for a given date range.
+
+    Business rule: date_dimension is a full-refresh reference table. It is not
+    constrained by the 5-minute dashboard SLA, but Gold facts depend on its
+    complete calendar coverage for partition and BI drill-down correctness.
 
     Args:
         start_date: The start date of the date range (YYYY-MM-DD).
@@ -74,6 +81,20 @@ def generate_date_dim(
         ).alias("full_date")
     )
 
+    """
+    SQL version of 
+
+    SELECT
+    explode(
+        sequence(
+            to_date('${start_date_value}'),
+            to_date('${end_date_value}'),
+            interval 1 day
+        )
+    ) AS full_date
+    
+    """
+
     date_dim_df = date_dim_df.withColumn(
         "date_key", F.date_format(F.col("full_date"), "yyyyMMdd").cast("int")
     )
@@ -84,7 +105,6 @@ def generate_date_dim(
         )
         .withColumn("day_of_month", F.dayofmonth(F.col("full_date")).cast("short"))
         .withColumn("day_of_year", F.dayofyear(F.col("full_date")).cast("short"))
-        .withColumn("week_of_month", _calculate_week_of_month_col("full_date"))
         .withColumn(
             "week_of_year", F.date_format(F.col("full_date"), "w").cast("short")
         )
@@ -98,8 +118,5 @@ def generate_date_dim(
     date_dim_df = date_dim_df.withColumn(
         "is_holiday", F.when(F.col("holiday_name").isNotNull(), True).otherwise(False)
     )
-
-    date_dim_df = add_audit_columns(date_dim_df, batch_logical_date)
-    date_dim_df = schema_enforcing(date_dim_df, DateDimensionSchema)
 
     return date_dim_df

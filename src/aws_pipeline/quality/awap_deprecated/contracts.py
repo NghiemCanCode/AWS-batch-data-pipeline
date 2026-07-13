@@ -3,9 +3,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
+import os
 from typing import Any
+from uuid import uuid4
 
-from pyspark.sql import DataFrame
+from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql.types import StructType
 
 from ..config import get_sla_config
@@ -24,6 +26,37 @@ class RefreshCadence(StrEnum):
     CDC = "cdc"
     FIVE_MINUTES = "five_minutes"
     PERIODIC = "periodic"
+
+
+@dataclass(frozen=True)
+class GoldRunContext:
+    batch_logical_date: str
+    pipeline_run_id: str
+    audit_run_id: str
+    lineage_run_id: str | None = None
+    window_start: str | None = None
+    window_end: str | None = None
+
+    @classmethod
+    def from_spark(
+        cls,
+        spark: SparkSession,
+        batch_logical_date: str,
+        window_start: str | None = None,
+        window_end: str | None = None,
+    ) -> "GoldRunContext":
+        spark_app_id = spark.sparkContext.applicationId or "local-spark-application"
+        pipeline_run_id = os.environ.get("PIPELINE_RUN_ID") or spark_app_id
+        audit_run_id = os.environ.get("AUDIT_RUN_ID") or str(uuid4())
+        lineage_run_id = os.environ.get("LINEAGE_RUN_ID") or pipeline_run_id
+        return cls(
+            batch_logical_date=batch_logical_date,
+            pipeline_run_id=pipeline_run_id,
+            audit_run_id=audit_run_id,
+            lineage_run_id=lineage_run_id,
+            window_start=window_start,
+            window_end=window_end,
+        )
 
 
 @dataclass(frozen=True)
@@ -51,6 +84,8 @@ class GoldDatasetContract:
     unique_key: tuple[str, ...] = ()
     partition_columns: tuple[str, ...] = ()
     cdc_key: tuple[str, ...] = ()
+    scd_natural_key: tuple[str, ...] = ()
+    scd_tracked_columns: tuple[str, ...] = ()
     freshness_column: str = "_updated_at"
     max_window_minutes: int = field(
         default_factory=lambda: get_sla_config().dashboard_refresh_minutes

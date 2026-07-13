@@ -60,3 +60,6 @@ dist/
 
 # Agent skill
 .agents/
+
+# Notebook
+*-checkpoint.ipynb

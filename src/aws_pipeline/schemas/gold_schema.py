@@ -16,17 +16,8 @@ from pyspark.sql.types import (
 # 2. Surrogate Keys: MD5 Hashing is used for distributed scalability on Spark.
 # 3. Data Privacy: Fields are tagged with [PII] or [SENSITIVE] for Governance.
 #    Access to these fields should be restricted via Column-Level Security (e.g., Lake Formation).
+# 4. SYSTEM_AUDIT_COLUMNS will move to platform layer
 TIMEZONE_POLICY = "UTC"
-
-# --- System Audit Columns ---
-SYSTEM_AUDIT_COLUMNS = [
-    StructField("_created_at", TimestampNTZType(), False),  # UTC
-    StructField("_source_file", StringType(), True),
-    StructField("_processing_id", StringType(), False),
-    StructField("_updated_at", TimestampNTZType(), False),  # UTC
-    StructField("_batch_logical_date", TimestampNTZType(), False),  # UTC
-    StructField("_is_deleted", BooleanType(), True),
-]
 
 # --- Dimensions ---
 
@@ -48,7 +39,6 @@ DateDimensionSchema = StructType(
         StructField("is_holiday", BooleanType(), True),
         StructField("holiday_name", StringType(), True),
     ]
-    + SYSTEM_AUDIT_COLUMNS
 )
 
 TimeDimensionSchema = StructType(
@@ -87,12 +77,7 @@ CustomerDimensionSchema = StructType(
         StructField("retirement_age", ShortType(), True),
         # -- The "current_age" column will be automatically calculated in BI Redshift's view
         # -- ML usecase, Will be limit BI Redshift's view
-        StructField(
-            "birth_month", ShortType(), True
-        ),  # [SENSITIVE] Quasi-identifier | NOT tracked in SCD change detection
-        StructField(
-            "birth_year", ShortType(), True
-        ),  # [SENSITIVE] Quasi-identifier | NOT tracked in SCD change detection
+        
         StructField("gender", StringType(), True),  # [SENSITIVE] Quasi-identifier
         StructField(
             "income_bracket", StringType(), True

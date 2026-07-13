@@ -8,7 +8,7 @@ from ..audit_log import AuditLogContext, write_quality_audit_log
 from ...utils.audit_helpers import AuditResult, audit_fail
 from .common import has_critical_failures
 from .contract_audit import audit_staging_contract
-from .contracts import GoldDatasetContract
+from .contracts import GoldDatasetContract, GoldRunContext
 from .publisher import publish_staging_dataset, write_staging_dataset
 
 
@@ -16,7 +16,8 @@ def audit_write_dataset(
     staging_df: DataFrame,
     output_base_path: str,
     contract: GoldDatasetContract,
-) -> str:
+    run_context: GoldRunContext,
+) -> tuple[str, DataFrame]:
     """
     Generic Write step for any dataset after its input audit/transform.
     """
@@ -24,6 +25,7 @@ def audit_write_dataset(
         staging_df,
         output_base_path=output_base_path,
         contract=contract,
+        run_context=run_context,
         mode="overwrite",
     )
 
@@ -32,6 +34,7 @@ def audit_publish_dataset(
     staging_df: DataFrame,
     output_base_path: str,
     contract: GoldDatasetContract,
+    run_context: GoldRunContext,
     source_dfs: dict[str, DataFrame] | None = None,
     audit_log_context: AuditLogContext | None = None,
     audit_log_path: str | None = None,
@@ -67,6 +70,7 @@ def audit_publish_dataset(
         staging_df,
         output_base_path=output_base_path,
         contract=contract,
+        run_context=run_context,
     )
 
     elapsed_seconds = monotonic() - started_at

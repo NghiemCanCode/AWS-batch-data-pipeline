@@ -1,10 +1,6 @@
 from pyspark.sql import Column, DataFrame, functions as F
 
-from ...schemas.gold_schema import AccountTransactionFactSchema
-from ...utils.audit_helpers import add_audit_columns, schema_enforcing
 
-
-HIGH_EFFECTIVE_TO_DATE = "9999-12-31 23:59:59"
 DEFAULT_CURRENCY_TYPE = "USD"
 DEFAULT_TRANS_ERROR_TYPE = "No Error"
 
@@ -69,14 +65,6 @@ def _time_key_col(timestamp_col: str) -> Column:
     ).cast("int")
 
 
-def _scd_effective_to_col(alias_name: str) -> Column:
-    column_name = f"{alias_name}.effective_to_date"
-    return F.coalesce(
-        F.col(column_name),
-        F.lit(HIGH_EFFECTIVE_TO_DATE).cast("timestamp_ntz"),
-    )
-
-
 def process_account_transaction_fact(
     transactions_df: DataFrame,
     customer_dim_df: DataFrame,
@@ -88,6 +76,15 @@ def process_account_transaction_fact(
     currency_dim_df: DataFrame,
     batch_logical_date,
 ) -> DataFrame:
+    """
+    Build the transaction fact at one row per source transaction.
+
+    Business rule: this dashboard-facing fact reports transactions against the
+    current customer/account SCD2 versions available in Gold, not expensive
+    point-in-time lookups. Dimension misses are preserved as NULL foreign keys
+    and blocked by Audit 2, which avoids silently losing transactions while
+    keeping the transform bounded for the 5-minute dashboard SLA.
+    """
     transactions = (
         transactions_df.withColumn(
             "errors_first_value",
@@ -111,20 +108,16 @@ def process_account_transaction_fact(
     )
 
     customer_dim = (
-        customer_dim_df.select(
+        customer_dim_df.where(F.col("is_current").cast("boolean")).select(
             F.col("customer_key"),
             _normalized_join_col("customer_id").alias("customer_id_join"),
-            F.col("effective_from_date"),
-            F.col("effective_to_date"),
         )
         .alias("customer")
     )
     account_dim = (
-        account_dim_df.select(
+        account_dim_df.where(F.col("is_current").cast("boolean")).select(
             F.col("account_key"),
             _normalized_join_col("account_id").alias("account_id_join"),
-            F.col("effective_from_date"),
-            F.col("effective_to_date"),
         )
         .alias("account")
     )
@@ -168,41 +161,25 @@ def process_account_transaction_fact(
     fact_df = (
         transactions.join(
             customer_dim,
-            (F.col("transactions.customer_id_join") == F.col("customer.customer_id_join"))
-            & (
-                F.col("transactions.transaction_timestamp")
-                >= F.col("customer.effective_from_date")
-            )
-            & (
-                F.col("transactions.transaction_timestamp")
-                <= _scd_effective_to_col("customer")
-            ),
-            "inner",
+            F.col("transactions.customer_id_join") == F.col("customer.customer_id_join"),
+            "left",
         )
         .join(
             account_dim,
-            (F.col("transactions.account_id_join") == F.col("account.account_id_join"))
-            & (
-                F.col("transactions.transaction_timestamp")
-                >= F.col("account.effective_from_date")
-            )
-            & (
-                F.col("transactions.transaction_timestamp")
-                <= _scd_effective_to_col("account")
-            ),
-            "inner",
+            F.col("transactions.account_id_join") == F.col("account.account_id_join"),
+            "left",
         )
         .join(
             transaction_type_dim,
             F.col("transactions.trans_type_join")
             == F.col("transaction_type.trans_type_join"),
-            "inner",
+            "left",
         )
         .join(
             merchant_dim,
             F.col("transactions.merchant_code_join")
             == F.col("merchant.merchant_code_join"),
-            "inner",
+            "left",
         )
         .join(
             location_dim,
@@ -214,19 +191,19 @@ def process_account_transaction_fact(
                 F.col("transactions.merchant_state_join")
                 == F.col("location.merchant_state_join")
             ),
-            "inner",
+            "left",
         )
         .join(
             trans_error_type_dim,
             F.col("transactions.trans_error_type_join")
             == F.col("trans_error_type.trans_error_type_join"),
-            "inner",
+            "left",
         )
         .join(
             currency_dim,
             F.col("transactions.currency_type_join")
             == F.col("currency.currency_type_join"),
-            "inner",
+            "left",
         )
         .select(
             F.col("transactions.transaction_id").alias("transaction_id"),
@@ -244,5 +221,4 @@ def process_account_transaction_fact(
         )
     )
 
-    fact_df = add_audit_columns(fact_df, batch_logical_date)
-    return schema_enforcing(fact_df, AccountTransactionFactSchema)
+    return fact_df

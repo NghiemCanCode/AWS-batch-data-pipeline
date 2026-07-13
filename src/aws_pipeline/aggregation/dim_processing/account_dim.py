@@ -1,8 +1,5 @@
 from pyspark.sql import DataFrame, functions as F
 
-from ...schemas.gold_schema import AccountDimensionSchema
-from ...utils.audit_helpers import add_audit_columns, schema_enforcing
-
 
 def _timestamp_ntz_lit(value):
     return F.lit(value).cast("timestamp_ntz")
@@ -12,8 +9,10 @@ def process_account_dim(cards_df: DataFrame, batch_logical_date) -> DataFrame:
     """
     Build the Account dimension from the Cards silver DataFrame.
 
-    This creates the initial SCD Type 2 version for each card account. Historical
-    version comparison/merge is expected to happen in the downstream gold load.
+    Business rule: Gold account/card attributes support 5-minute fraud
+    dashboards and monthly account analytics. We use Type 2 history for card
+    attributes that affect spend analysis or risk segmentation, while raw event
+    history remains in Silver.
     """
     effective_from_date_col = _timestamp_ntz_lit(batch_logical_date)
 
@@ -23,9 +22,10 @@ def process_account_dim(cards_df: DataFrame, batch_logical_date) -> DataFrame:
         .withColumn(
             "account_key",
             F.md5(
-                F.concat(
-                    F.col("account_id"),
-                    F.date_format(F.col("effective_from_date"), "yyyy-MM-dd HH:mm:ss"),
+                F.concat_ws(
+                    "||",
+                    F.col("account_id").cast("string"),
+                    F.col("effective_from_date").cast("string"),
                 )
             ),
         )
@@ -54,8 +54,5 @@ def process_account_dim(cards_df: DataFrame, batch_logical_date) -> DataFrame:
             "version_number",
         )
     )
-
-    account_dim_df = add_audit_columns(account_dim_df, batch_logical_date)
-    account_dim_df = schema_enforcing(account_dim_df, AccountDimensionSchema)
 
     return account_dim_df

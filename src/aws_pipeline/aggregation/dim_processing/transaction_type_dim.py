@@ -1,8 +1,5 @@
 from pyspark.sql import DataFrame, functions as F
 
-from ...schemas.gold_schema import TransactionTypeDimensionSchema
-from ...utils.audit_helpers import add_audit_columns, schema_enforcing
-
 
 TRANSACTION_CHANNEL_COLUMN = "transaction_channel"
 MAX_POSITIVE_SHORT = 32767
@@ -22,6 +19,10 @@ def _transaction_type_key_col(column_name: str):
 def process_transaction_type_dim(transactions_df: DataFrame, batch_logical_date) -> DataFrame:
     """
     Build the Transaction Type dimension from the Transactions silver DataFrame.
+
+    Business rule: transaction channels are a tiny reference set inferred from
+    transactions. We refresh the set in full so dashboards use one governed
+    channel taxonomy without SCD row history.
     """
     if TRANSACTION_CHANNEL_COLUMN not in transactions_df.columns:
         raise ValueError(
@@ -36,12 +37,6 @@ def process_transaction_type_dim(transactions_df: DataFrame, batch_logical_date)
         .distinct()
         .withColumn("trans_type_key", _transaction_type_key_col("trans_type"))
         .select("trans_type_key", "trans_type")
-    )
-
-    transaction_type_dim_df = add_audit_columns(transaction_type_dim_df, batch_logical_date)
-    transaction_type_dim_df = schema_enforcing(
-        transaction_type_dim_df,
-        TransactionTypeDimensionSchema,
     )
 
     return transaction_type_dim_df

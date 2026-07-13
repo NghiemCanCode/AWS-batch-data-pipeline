@@ -1,8 +1,5 @@
 from pyspark.sql import DataFrame, functions as F
 
-from ...schemas.gold_schema import AccountMonthlySnapshotFactSchema
-from ...utils.audit_helpers import add_audit_columns, schema_enforcing
-
 
 _REQUIRED_COLUMNS = (
     "date_key",
@@ -29,6 +26,10 @@ def process_account_monthly_snapshot_fact(
 ) -> DataFrame:
     """
     Build monthly account snapshots from account transaction fact rows.
+
+    Business rule: monthly snapshots are historical deterministic aggregates,
+    not 5-minute operational datasets. Re-publishing the same month/account
+    grain should replace the aggregate partition, not create SCD2 versions.
 
     Amounts greater than zero are treated as income. Amounts less than zero are
     treated as outcomes and reported as positive magnitudes.
@@ -110,5 +111,4 @@ def process_account_monthly_snapshot_fact(
         )
     )
 
-    monthly_totals = add_audit_columns(monthly_totals, batch_logical_date)
-    return schema_enforcing(monthly_totals, AccountMonthlySnapshotFactSchema)
+    return monthly_totals

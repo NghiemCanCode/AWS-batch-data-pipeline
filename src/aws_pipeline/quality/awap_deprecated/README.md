@@ -215,12 +215,3 @@ This keeps scheduler concerns out of the transform code. A future Airflow DAG
 can orchestrate dependencies between datasets without rewriting the quality
 logic.
 
-## Current Scope
-
-- Silver to Gold uses this framework now.
-- Bronze to Silver is intentionally left untouched for now.
-- Source to Bronze should remain a raw landing step with lightweight ingestion
-  checks, not full AWAP.
-
-This boundary keeps the refactor incremental and reduces the risk of changing
-two pipeline layers at the same time.

@@ -1,8 +1,5 @@
 from pyspark.sql import DataFrame, functions as F
 
-from ...schemas.gold_schema import TemporalTrendFactSchema
-from ...utils.audit_helpers import add_audit_columns, schema_enforcing
-
 
 _REQUIRED_COLUMNS = (
     "date_key",
@@ -12,6 +9,14 @@ _REQUIRED_COLUMNS = (
     "trans_error_type_key",
 )
 _NON_ERROR_TRANS_ERROR_TYPE_KEY = 0
+
+
+def _five_minute_time_key_col(column_name: str):
+    time_key = F.col(column_name).cast("int")
+    hour_part = F.floor(time_key / F.lit(10000)).cast("int")
+    minute_part = F.floor((time_key % F.lit(10000)) / F.lit(100)).cast("int")
+    bucket_minute = (F.floor(minute_part / F.lit(5)) * F.lit(5)).cast("int")
+    return (hour_part * F.lit(10000) + bucket_minute * F.lit(100)).cast("int")
 
 
 def _require_columns(df: DataFrame) -> None:
@@ -29,6 +34,10 @@ def process_temporal_trend_fact(
     """
     Build temporal merchant trend aggregates from account transaction fact rows.
 
+    Business rule: merchant trend dashboards refresh every 5 minutes and display
+    one bucket per merchant per 5-minute interval. Seconds are rounded down to
+    the bucket start to keep the aggregate aligned with the dashboard SLA.
+
     Amounts greater than zero are treated as income. Amounts less than zero are
     treated as outcomes and reported as positive magnitudes.
     """
@@ -38,6 +47,10 @@ def process_temporal_trend_fact(
 
     temporal_trends = (
         account_transaction_fact_df.withColumn(
+            "trend_time_key",
+            _five_minute_time_key_col("time_key"),
+        )
+        .withColumn(
             "income_amount",
             F.when(F.col("transaction_amount") > zero_amount, F.col("transaction_amount"))
             .otherwise(zero_amount)
@@ -60,7 +73,7 @@ def process_temporal_trend_fact(
                 F.lit(1),
             ).otherwise(F.lit(0)),
         )
-        .groupBy("date_key", "time_key", "merchant_key")
+        .groupBy("date_key", "trend_time_key", "merchant_key")
         .agg(
             F.count(F.lit(1)).cast("int").alias("number_transaction"),
             F.sum("successful_transaction")
@@ -71,7 +84,7 @@ def process_temporal_trend_fact(
             .cast("decimal(18,2)")
             .alias("total_outcome_amount"),
         )
+        .withColumnRenamed("trend_time_key", "time_key")
     )
 
-    temporal_trends = add_audit_columns(temporal_trends, batch_logical_date)
-    return schema_enforcing(temporal_trends, TemporalTrendFactSchema)
+    return temporal_trends

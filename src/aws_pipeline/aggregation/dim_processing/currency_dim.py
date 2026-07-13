@@ -2,9 +2,6 @@ from typing import Optional, Sequence
 
 from pyspark.sql import DataFrame, SparkSession, functions as F
 
-from ...schemas.gold_schema import CurrencyDimensionSchema
-from ...utils.audit_helpers import add_audit_columns, schema_enforcing
-
 
 DEFAULT_CURRENCY_CODE = "USD"
 
@@ -215,6 +212,10 @@ def generate_currency_dim(
 ) -> DataFrame:
     """
     Generate the static Currency dimension from provided ISO 4217 currency codes.
+
+    Business rule: currency is a governed ISO 4217 reference dimension. Gold
+    rejects unsupported codes at build time so BI metrics never mix custom
+    labels with standard numeric currency keys.
     """
     currency_codes = _normalize_currency_codes(currencies)
     unsupported_codes = [
@@ -239,8 +240,5 @@ def generate_currency_dim(
         F.col("currency_key").cast("short").alias("currency_key"),
         F.col("currency_type"),
     )
-
-    currency_dim_df = add_audit_columns(currency_dim_df, batch_logical_date)
-    currency_dim_df = schema_enforcing(currency_dim_df, CurrencyDimensionSchema)
 
     return currency_dim_df

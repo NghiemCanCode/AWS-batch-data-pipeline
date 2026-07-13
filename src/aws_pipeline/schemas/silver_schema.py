@@ -52,7 +52,7 @@ TransactionsSilverSchema = StructType(
 CardsSilverSchema = StructType(
     [
         StructField("card_id", StringType(), False),
-        StructField("client_id", StringType(), False),
+        StructField("client_id", StringType(), False), # user_id
         StructField("card_brand", StringType(), True),
         StructField("card_type", StringType(), True),
         StructField("mask_card_number", StringType(), True),

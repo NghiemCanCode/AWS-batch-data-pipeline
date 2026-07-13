@@ -1,8 +1,5 @@
 from pyspark.sql import DataFrame, functions as F
 
-from ...schemas.gold_schema import MerchantDimensionSchema
-from ...utils.audit_helpers import add_audit_columns, schema_enforcing
-
 
 def _normalized_string_col(column_name: str) -> F.col:
     trimmed_col = F.trim(F.col(column_name).cast("string"))
@@ -12,6 +9,10 @@ def _normalized_string_col(column_name: str) -> F.col:
 def process_merchant_dim(mcc_df: DataFrame, batch_logical_date) -> DataFrame:
     """
     Build the Merchant dimension from the MCC silver DataFrame.
+
+    Business rule: merchant MCC codes are treated as a replaceable reference
+    dimension. Full refresh is safer than CDC because the source is small and
+    category labels can be corrected without preserving row history.
     """
     merchant_dim_df = (
         mcc_df.select(
@@ -27,8 +28,5 @@ def process_merchant_dim(mcc_df: DataFrame, batch_logical_date) -> DataFrame:
         )
         .distinct()
     )
-
-    merchant_dim_df = add_audit_columns(merchant_dim_df, batch_logical_date)
-    merchant_dim_df = schema_enforcing(merchant_dim_df, MerchantDimensionSchema)
 
     return merchant_dim_df

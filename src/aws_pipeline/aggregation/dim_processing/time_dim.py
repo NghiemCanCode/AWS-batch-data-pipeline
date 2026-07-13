@@ -5,9 +5,6 @@ The TimeType() is not stable yet in this version of Spark, so we will use String
 
 from pyspark.sql import SparkSession, DataFrame, Column, functions as F
 
-from ...utils.audit_helpers import schema_enforcing, add_audit_columns
-from ...schemas.gold_schema import TimeDimensionSchema
-
 
 def _calculate_time_key_col(column_name: str) -> Column:
     return (
@@ -105,6 +102,10 @@ def generate_time_dim(spark: SparkSession, batch_logical_date) -> DataFrame:
     """
     Generate a time dimension table in 24 hours.
 
+    Business rule: time_dimension is a static 24-hour reference table. Dashboard
+    facts can bucket into 5-minute intervals without rebuilding this dimension
+    for every operational refresh window.
+
     Args:
         spark: The SparkSession to use for the operation.
 
@@ -135,8 +136,5 @@ def generate_time_dim(spark: SparkSession, batch_logical_date) -> DataFrame:
         .withColumn("day_part", _calculate_day_part_col("time_key"))
         .drop("id")
     )
-
-    time_dim_df = add_audit_columns(time_dim_df, batch_logical_date)
-    time_dim_df = schema_enforcing(time_dim_df, TimeDimensionSchema)
 
     return time_dim_df
