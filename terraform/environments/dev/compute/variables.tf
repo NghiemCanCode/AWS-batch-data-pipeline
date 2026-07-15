@@ -33,3 +33,11 @@ variable "region" {
   description = "AWS Region"
   type        = string
 }
+
+variable "is_endpoint" {
+  description = "livy endpoint"
+}
+
+variable "is_studio_enabled" {
+  description = "enable emr serverless studio"
+}
