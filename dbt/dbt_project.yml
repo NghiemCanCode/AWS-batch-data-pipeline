@@ -1,0 +1,28 @@
+name: 'aws_pipeline'
+version: '1.0.0'
+config-version: 2
+
+# Must match a profile name in ~/.dbt/profiles.yml (dbt-spark, connecting to
+# the EMR Thrift server; not committed since it holds connection details).
+profile: 'aws_pipeline'
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+analysis-paths: ["analyses"]
+
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+vars:
+  dim_date_start_date: '2015-01-01'
+  dim_date_end_date: '2035-12-31'
+
+models:
+  aws_pipeline:
+    marts:
+      +materialized: table
+      +schema: gold

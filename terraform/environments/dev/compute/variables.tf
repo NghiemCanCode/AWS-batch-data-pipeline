@@ -8,11 +8,6 @@ variable "emr_release_label" {
   type        = string
 }
 
-variable "emr_app_type" {
-  description = "Type of EMR Serverless application"
-  type        = string
-}
-
 variable "data_lake_bucket_name" {
   description = "Data lake bucket name"
   type        = string

@@ -1,5 +1,6 @@
 .env
 scripts/.env.runtime
+.spark_remote_env
 .venv/
 ### Terraform ###
 # Local .terraform directories
@@ -63,3 +64,9 @@ dist/
 
 # Notebook
 *-checkpoint.ipynb
+
+# dbt
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+profiles.yml
