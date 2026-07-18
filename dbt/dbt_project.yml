@@ -25,4 +25,4 @@ models:
   aws_pipeline:
     marts:
       +materialized: table
-      +schema: gold
+      +file_format: iceberg

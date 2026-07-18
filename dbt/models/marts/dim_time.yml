@@ -1,0 +1,53 @@
+version: 2
+
+models:
+  - name: dim_time
+    description: >
+      Static 24-hour time dimension (one row per second of day, 86,400 rows).
+      Generated periodically and independently of the main pipeline runs;
+      not rebuilt on every operational refresh window.
+    columns:
+      - name: time_key
+        description: Integer smart key HHMMSS (e.g. 143059 = 14:30:59).
+        tests:
+          - unique
+          - not_null
+      - name: time_24h
+        description: Display string of time_key as HH:MM:SS.
+        tests:
+          - not_null
+      - name: hour_24
+        description: Hour in 24-hour format (0-23).
+        tests:
+          - not_null
+      - name: hour_12
+        description: Hour in 12-hour format (1-12).
+        tests:
+          - not_null
+      - name: am_pm
+        description: AM/PM indicator.
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['AM', 'PM']
+      - name: minute
+        description: Minute of hour (0-59).
+      - name: second
+        description: Second of minute (0-59).
+      - name: time_bucket_15min
+        description: time_key rounded down to the nearest 15-minute bucket, as HHMM smart key.
+      - name: time_bucket_30min
+        description: time_key rounded down to the nearest 30-minute bucket, as HHMM smart key.
+      - name: time_bucket_hourly
+        description: time_key rounded down to the hour, as HHMM smart key.
+      - name: time_bucket_15min_str
+        description: Display string of time_bucket_15min as HH:MM.
+      - name: time_bucket_30min_str
+        description: Display string of time_bucket_30min as HH:MM.
+      - name: time_bucket_hourly_str
+        description: Display string of time_bucket_hourly as HH:MM.
+      - name: day_part
+        description: Coarse part-of-day label derived from time_key.
+        tests:
+          - accepted_values:
+              values: ['Early Night', 'Morning', 'Afternoon', 'Evening', 'Night']
