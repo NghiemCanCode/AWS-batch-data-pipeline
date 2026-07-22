@@ -196,5 +196,5 @@ export SPARK_REMOTE="$URL"
 # poetry run dbt run --project-dir "$DBT_PROJECT_DIR" --select dim_time
 
 poetry run dbt build --project-dir "$DBT_PROJECT_DIR" \
-  --select stg_customers snapshot_customers dim_customers
+  --select stg_customers snapshot_customers dim_customers stg_cards snapshot_cards dim_cards
 

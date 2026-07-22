@@ -1,0 +1,113 @@
+version: 1
+
+# TODO(security): spec (docs/dimensions/cards_dimension.md section 10) requires
+# SHA-256 hashing of card_id and customer_id, and Lake Formation column-level
+# policies for expires_month/expires_year. Neither is implemented — this project
+# hasn't migrated to Lake Formation yet.
+
+models:
+  - name: dim_cards
+    description: >
+      Cards dimension (SCD Type 2). Grain is one row per card per version of tracked
+      attributes (has_chip, has_a_cvv, expires_month, expires_year, num_card_issue).
+      Sourced from finance_silver.silver_cards.
+    columns:
+      - name: card_key
+        description: Surrogate key, hash of card_id + effective_from_date.
+        tests:
+          - unique
+          - not_null
+
+      - name: card_id
+        description: Business/natural key of the card (silver_cards.card_id).
+        tests:
+          - not_null
+
+      - name: customer_id
+        description: >
+          Owning customer's business key (silver_cards.client_id). Nullable — a
+          card can be stored in this dimension without a resolved owner (spec
+          section 5.1). Not remapped to the Unknown member; see section 6.2 TODO
+          in dim_cards.sql.
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_id
+
+      - name: card_brand
+        description: >
+          Card network. Defaulted to UNKNOWN when missing or unrecognized.
+          Not SCD2-tracked (Type 1).
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['VISA', 'MASTERCARD', 'AMEX', 'DISCOVER', 'UNKNOWN']
+
+      - name: mask_card_number
+        description: >
+          Masked card number, already obfuscated in Silver (e.g. ******1234).
+          Not SCD2-tracked — changes are treated as data correction.
+
+      - name: expires_month
+        description: Card expiration month, derived from silver_cards.expires. SCD2-tracked.
+        tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 12
+
+      - name: expires_year
+        description: Card expiration year, derived from silver_cards.expires. SCD2-tracked.
+
+      - name: has_a_cvv
+        description: Whether the card has a CVV. SCD2-tracked.
+        tests:
+          - accepted_values:
+              arguments:
+                values: [true, false]
+                quote: false
+
+      - name: has_chip
+        description: Whether the card has a chip. SCD2-tracked.
+        tests:
+          - accepted_values:
+              arguments:
+                values: [true, false]
+                quote: false
+
+      - name: num_card_issue
+        description: Number of times this card has been reissued. SCD2-tracked.
+        tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+
+      - name: effective_from_date
+        description: UTC timestamp from which this version of the record is valid.
+        tests:
+          - not_null
+
+      - name: effective_to_date
+        description: >
+          UTC timestamp until which this version is valid. 9999-12-31 23:59:59
+          for the current version.
+        tests:
+          - not_null
+
+      - name: is_current
+        description: True for the currently active version of the card record.
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [true, false]
+                quote: false
+
+      - name: version_number
+        description: SCD2 version counter, starting at 1 and incrementing per change.
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1

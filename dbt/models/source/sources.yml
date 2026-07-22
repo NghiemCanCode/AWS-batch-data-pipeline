@@ -36,3 +36,20 @@ sources:
 
           - name: num_credit_cards
             description: Number of credit cards held by the customer.
+
+      - name: silver_cards
+        description: Silver-layer cards table, crawled from the S3 silver/ path.
+        columns:
+          - name: card_id
+            description: Business/natural key of the card.
+            tests:
+              - not_null
+
+          - name: client_id
+            description: Owning customer's business key (silver_users.user_id).
+
+          - name: expires
+            description: Card expiration date, split into expires_month/expires_year in staging.
+
+          - name: num_cards_issued
+            description: Number of times this card has been reissued.
