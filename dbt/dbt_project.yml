@@ -23,6 +23,10 @@ vars:
 
 models:
   aws_pipeline:
+    staging:
+      +materialized: table
+      +file_format: iceberg
+      +schema: gold_staging
     marts:
       +materialized: table
       +file_format: iceberg

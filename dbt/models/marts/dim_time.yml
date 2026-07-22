@@ -29,7 +29,8 @@ models:
         tests:
           - not_null
           - accepted_values:
-              values: ['AM', 'PM']
+              arguments:
+                values: ['AM', 'PM']
       - name: minute
         description: Minute of hour (0-59).
       - name: second
@@ -50,4 +51,5 @@ models:
         description: Coarse part-of-day label derived from time_key.
         tests:
           - accepted_values:
-              values: ['Early Night', 'Morning', 'Afternoon', 'Evening', 'Night']
+              arguments:
+                values: ['Early Night', 'Morning', 'Afternoon', 'Evening', 'Night']

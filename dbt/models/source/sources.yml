@@ -1,0 +1,38 @@
+version: 2
+
+sources:
+  - name: finance_silver
+    schema: finance_silver
+    description: >
+      Silver-layer tables in the Glue Data Catalog. Populated by a temporary
+      Glue Crawler (scripts/glue_crawler.sh) over s3://<datalake_bucket>/silver/
+      until the Silver layer migrates to Iceberg — drop/replace this source
+      once that migration lands.
+    tables:
+      - name: silver_users
+        description: Silver-layer users table, crawled from the S3 silver/ path.
+        columns:
+          - name: birth_month
+            description: Month of birth (1-12).
+            tests:
+              - dbt_utils.accepted_range:
+                  arguments:
+                    min_value: 1
+                    max_value: 12
+
+          - name: yearly_income
+            description: Customer's yearly income in USD.
+
+          - name: total_debt
+            description: Customer's total outstanding debt.
+
+          - name: credit_score
+            description: Customer's credit score.
+            tests:
+              - dbt_utils.accepted_range:
+                  arguments:
+                    min_value: 300
+                    max_value: 850
+
+          - name: num_credit_cards
+            description: Number of credit cards held by the customer.

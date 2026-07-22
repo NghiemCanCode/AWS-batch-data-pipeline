@@ -1,0 +1,115 @@
+version: 1
+
+# TODO(security): spec (docs/dimensions/customers_dimension.md section 10) requires
+# SHA-256 hashing of customer_id and Lake Formation column-level policies for
+# gender, birth_year, address_key, yearly_income, total_debt, credit_score.
+# Neither is implemented — this project hasn't migrated to Lake Formation yet.
+
+models:
+  - name: dim_customers
+    description: >
+      Customer dimension (SCD Type 2). Grain is one row per customer per version of tracked
+      attributes (income_bracket, address_key). Sourced from finance_silver.silver_users.
+    columns:
+      - name: customer_key
+        description: Surrogate key, hash of customer_id + effective_from_date.
+        tests:
+          - unique
+          - not_null
+
+      - name: customer_id
+        description: Business/natural key of the customer (silver_users.user_id).
+        tests:
+          - not_null
+
+      - name: retirement_age
+        description: Customer's expected retirement age.
+        tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 40
+                max_value: 80
+
+      - name: gender
+        description: Customer gender.
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['MALE', 'FEMALE', 'OTHER', 'UNKNOWN']
+
+      - name: birth_year
+        description: Year of birth.
+        tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1900
+                max_value: 2100
+
+      - name: address_key
+        description: >
+          MD5 hash of trimmed city + state, used as FK to
+          gold.dim_geo.location_key. Maps to the Unknown member key `-1`
+          when city/state are missing (see spec sections 6.2 and 7).
+          TODO: once a real gold.dim_geo dimension exists, resolve this via
+          an actual join instead of self-hashing city + state here.
+          SCD2-tracked attribute.
+        tests:
+          - not_null
+
+      - name: yearly_income
+        description: Customer's yearly income in USD. Used to derive income_bracket.
+
+      - name: income_bracket
+        description: >
+          Bucketed yearly_income: "Low" (< $60k), "Middle" ($60k-$180k),
+          "High" (> $180k), "Unknown" when yearly_income is missing.
+          SCD2-tracked attribute.
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['Low', 'Middle', 'High', 'Unknown']
+
+      - name: total_debt
+        description: >
+          Customer's total outstanding debt, reflecting total unpaid
+          financial obligations.
+
+      - name: credit_score
+        description: Customer's credit score.
+        tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 300
+                max_value: 850
+
+      - name: num_credit_cards
+        description: Number of credit cards held by the customer, used for fast card-count lookups.
+
+      - name: effective_from_date
+        description: UTC timestamp from which this version of the record is valid.
+        tests:
+          - not_null
+
+      - name: effective_to_date
+        description: >
+          UTC timestamp until which this version is valid. 9999-12-31 23:59:59
+          for the current version.
+        tests:
+          - not_null
+
+      - name: is_current
+        description: True for the currently active version of the customer record.
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [true, false]
+                quote: false
+
+      - name: version_number
+        description: SCD2 version counter, starting at 1 and incrementing per change.
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
