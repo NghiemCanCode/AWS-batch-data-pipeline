@@ -47,14 +47,17 @@ models:
 
       - name: address_key
         description: >
-          MD5 hash of trimmed city + state, used as FK to
-          gold.dim_geo.location_key. Maps to the Unknown member key `-1`
-          when city/state are missing (see spec sections 6.2 and 7).
-          TODO: once a real gold.dim_geo dimension exists, resolve this via
-          an actual join instead of self-hashing city + state here.
-          SCD2-tracked attribute.
+          FK to gold.dim_geo.location_key, resolved via a join on trimmed
+          city + state (zip = 'UNKNOWN', since silver.users has no real zip).
+          Maps to the Unknown member key `-1` when city/state are missing or
+          don't resolve (see spec sections 6.2 and 7). SCD2-tracked attribute
+          (tracked via city/state in snapshot_customers).
         tests:
           - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_geo')
+                field: location_key
 
       - name: yearly_income
         description: Customer's yearly income in USD. Used to derive income_bracket.

@@ -36,10 +36,10 @@ select
         when yearly_income is not null then 'High'
         else 'Unknown'
     end as income_bracket,
-    case
-        when city != '' and state != '' then md5(concat(city, state))
-        else '-1'
-    end as address_key,
+    -- city/state passed through raw; dim_customers.sql resolves the real address_key
+    -- FK by joining gold.dim_geo instead of self-hashing here.
+    city,
+    state,
     total_debt,
     credit_score,
     num_credit_cards

@@ -53,3 +53,26 @@ sources:
 
           - name: num_cards_issued
             description: Number of times this card has been reissued.
+
+      - name: silver_transactions
+        description: Silver-layer transactions table, crawled from the S3 silver/ path.
+        columns:
+          - name: transaction_id
+            description: Business/natural key of the transaction.
+            tests:
+              - not_null
+
+          - name: client_id
+            description: Customer's business key (silver_users.user_id).
+
+          - name: card_id
+            description: Card's business key (silver_cards.card_id).
+
+          - name: merchant_city
+            description: Merchant location city, used to build gold.dim_geo.
+
+          - name: merchant_state
+            description: Merchant location state, used to build gold.dim_geo.
+
+          - name: zip
+            description: Merchant location zip code, used to build gold.dim_geo.

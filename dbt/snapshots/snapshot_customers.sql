@@ -7,13 +7,16 @@
    passed through but not tracked here, same as retirement_age/gender/birth_year — only
    the derived income_bracket bucket triggers a new SCD2 version. Spec section 6.4 leaves
    this undecided; revisit if point-in-time raw-value history is ever required. -#}
+{#- Tracks raw city/state (not the resolved address_key) since address_key is now
+   resolved via a join to gold.dim_geo in dim_customers.sql rather than computed here. -#}
 {{
     config(
         target_schema='gold_staging',
         file_format='iceberg',
         unique_key='customer_id',
         strategy='check',
-        check_cols=['income_bracket', 'address_key'],
+        check_cols=['yearly_income', 'total_debt', 'credit_score', 'income_bracket', 'city', 
+        'state'],
     )
 }}
 
