@@ -76,3 +76,14 @@ sources:
 
           - name: zip
             description: Merchant location zip code, used to build gold.dim_geo.
+
+      - name: silver_mcc
+        description: Silver-layer MCC (merchant category code) reference table, crawled from the S3 silver/ path.
+        columns:
+          - name: mcc_code
+            description: Merchant category code, natural key.
+            tests:
+              - not_null
+
+          - name: merchant_name
+            description: Merchant category label.

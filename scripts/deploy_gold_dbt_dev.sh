@@ -189,12 +189,22 @@ DBT_PROJECT_DIR="$ROOT_PATH/dbt"
 export SPARK_REMOTE="$URL"
 
 # ────── STEP 3: Run static dimension ───────────────
+# All commands below are commented out. Uncomment the one you want to run.
 
 # poetry run dbt seed --project-dir "$DBT_PROJECT_DIR" --select us_holidays
 
 # poetry run dbt run --project-dir "$DBT_PROJECT_DIR" --select dim_date
 # poetry run dbt run --project-dir "$DBT_PROJECT_DIR" --select dim_time
 
-poetry run dbt build --project-dir "$DBT_PROJECT_DIR" \
-  --select stg_geo dim_geo stg_customers snapshot_customers dim_customers stg_cards snapshot_cards dim_cards
+# poetry run dbt build --project-dir "$DBT_PROJECT_DIR" \
+#   --select stg_geo dim_geo
+
+# poetry run dbt build --project-dir "$DBT_PROJECT_DIR" \
+#   --select stg_customers snapshot_customers dim_customers
+
+# poetry run dbt build --project-dir "$DBT_PROJECT_DIR" \
+#   --select stg_cards snapshot_cards dim_cards
+
+# poetry run dbt build --project-dir "$DBT_PROJECT_DIR" \
+#   --select stg_mcc dim_merchant
 
