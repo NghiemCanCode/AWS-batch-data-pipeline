@@ -1,4 +1,6 @@
 .env
+scripts/.env.runtime
+.spark_remote_env
 .venv/
 ### Terraform ###
 # Local .terraform directories
@@ -57,5 +59,15 @@ dist/
 # Pytest
 .pytest_cache
 
+# Agent skill
+.agents/
 
-.agent/
+# Notebook
+*-checkpoint.ipynb
+
+# dbt
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+profiles.yml
+dbt/seeds/*.csv

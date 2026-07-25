@@ -1,0 +1,307 @@
+version: 1
+
+# TODO(security): spec (docs/metrics/card_portfolio_report.md section 10)
+# classifies every column NSA — the grain is card segment x day, so all columns
+# are aggregate counts with no single card or person identifiable, and nothing
+# here carries PAN/CVV/PII (business spec section 8 Compliance note). This
+# project hasn't migrated to Lake Formation yet, so no column-level policy is
+# enforced anyway (same gap as the sibling models), and no retention/purge
+# policy is assigned at project level.
+
+# TODO(observability): the three reconciliation/cross-check rows of section 9
+# are implemented as singular tests in dbt/tests/ (issued -> dim_cards,
+# transaction counts -> fact_transactions, Active Card <-> the activity fact),
+# plus a fourth for the "= 90 outside the first 89 days" half of the Window
+# completeness check that a column-level accepted_range cannot express. All are
+# scoped to the batch day (the partition insert_overwrite last touched) rather
+# than full history — cheaper per run and matching this model's own output
+# scope, but it relies on fact_transactions rows being immutable once written
+# (no late-arriving correction handling yet). Section 9 rates every check
+# Critical with a fail + halt action, so unlike fact_customer_activity_daily
+# nothing here is downgraded to severity warn. No alert channel exists at
+# project level (transactions_fact.md Open Question #9).
+
+models:
+  - name: rpt_card_portfolio
+    description: >
+      Card portfolio reporting model (spec:
+      docs/metrics/card_portfolio_report.md). Materializes the whole of
+      Dashboard C — issued vs active cards, Chip Adoption Rate, card reissue
+      distribution, and transaction success rate by card type — so BI reads one
+      table instead of re-deriving an as-of join, a trailing window and a ratio
+      for itself. Answers success criterion 5 directly (business spec Decision
+      #26, which reversed the second half of Decision #20).
+
+      Grain is one row per (date_key, chip_segment, card_brand): the state of
+      one card segment as of the END of one day. "Card type" is has_chip x
+      card_brand; has_a_cvv is deliberately out of the grain (near-constant in
+      the data, Open Question #1) and num_card_issue is expressed as bucket
+      columns rather than as a grain key.
+
+      The issued side is a point-in-time SCD2 count from gold.dim_cards (the
+      version in effect at end of day D), NOT is_current repeated per day. The
+      active side counts distinct cards and transactions over the trailing
+      90-day window (date_key - 89, date_key] — the same window as the Active
+      Card definition in business spec section 4. Both sides classify a card by
+      its as-of-end-of-day version, so every card sits in exactly one segment
+      per day. Transactions on an unresolved card (card_key = '-1') are KEPT and
+      land in the (UNKNOWN, UNKNOWN) bucket, unlike fact_customer_activity_daily
+      which drops its sentinel — so this table's transaction counts DO tie back
+      to fact_transactions exactly.
+
+      Loaded via insert_overwrite partitioned by date_key. The spine runs from
+      the first transaction day (not from the 1900-01-01 dimension backdate) to
+      the last day with real data on full-refresh, and covers exactly
+      batch_logical_date() on incremental runs — that macro means the DATA day,
+      so a T+1 run must pass --vars '{batch_logical_date: <data day>}' rather
+      than rely on its current_date() default. Never pass 2036-01-01: dim_dates
+      ends 2035-12-31, so that day resolves to nothing and the run writes zero
+      rows in silence.
+
+      KNOWN LIMITATION (spec section 3.1): dim_cards backdates each card's
+      version 1 to 1900-01-01 and the synthetic source is static (one version
+      per card), so issued_card_count is a CONSTANT across date_key and the chip
+      adoption line over time is FLAT. This is not a model bug — the
+      point-in-time logic is correct and will produce a real curve as soon as
+      the source can generate attribute changes. The active-side columns
+      (active_card_count_90d and the _90d transaction counts) are not affected:
+      transactions have a real time distribution, so those lines have real
+      shape.
+
+      AGGREGATION RULES for consumers (spec section 5.1, mandatory):
+      (1) issued_card_count is a STOCK, not a flow. It measures "existing as of
+      day D"; summing it across days counts the same card once per day. More
+      dangerous than the _90d columns because the column name carries no window
+      suffix to warn you — registry rule #9 exists for this column. The three
+      reissue bucket columns and total_card_reissue_count are stocks too, same
+      rule.
+      (2) NEVER sum any _90d column across multiple date_key values. Two
+      consecutive days' windows overlap by 89 days (registry rule #10, extending
+      #7). Read _90d columns at ONE date_key. For transaction counts over an
+      arbitrary period, sum fact_daily_transaction_trend instead.
+      (3) NO ratio is stored here, and none should be added. Chip adoption,
+      success rate and average reissue are all recomputed from the counts at
+      whatever aggregate level is being viewed (registry rule #1). This grain is
+      meant to be rolled up, so a stored rate would eventually get averaged
+      across brand/chip silently. This is the deliberate opposite of
+      rpt_merchant_error_daily, which is a final consumption grain.
+      (4) active_card_count_90d IS additive across segments within one day (each
+      card is in exactly one segment per day), but NOT across days — same reason
+      as registry rule #4.
+      (5) Do NOT compare rows with window_day_count < 90 against full-window
+      rows.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - date_key
+              - chip_segment
+              - card_brand
+
+    columns:
+      - name: date_key
+        description: >
+          The day whose end-of-day state this row describes (yyyyMMdd, int),
+          taken from the dim_dates spine. FK to gold.dim_dates.date_key, and the
+          partition key of this table.
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_dates')
+                field: date_key
+
+      - name: chip_segment
+        description: >
+          First half of "card type", derived from has_chip on the dim_cards
+          version in effect at the END of this day: true -> 'CHIP',
+          false -> 'NON_CHIP', null -> 'UNKNOWN'. Transactions on an unresolved
+          card (card_key = '-1') also land in 'UNKNOWN'. Encoded as a string
+          rather than a nullable boolean so the grain key can be tested not-null
+          and the UNKNOWN bucket has an explicit place instead of "null means
+          read the doc" (spec Decision Log 2026-07-25). This deliberately
+          differs in type from dim_cards.has_chip — a presentation column of the
+          reporting layer, not a dimension column.
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['CHIP', 'NON_CHIP', 'UNKNOWN']
+
+      - name: card_brand
+        description: >
+          Second half of "card type" — the everyday meaning of "card type" for
+          the Marketing persona. Inherited from dim_cards.card_brand (already
+          defaulted to 'UNKNOWN' there); Type 1 in the dimension, so it creates
+          no SCD2 version of its own, but it is still read off the
+          as-of-end-of-day version so it comes from the same single join as
+          chip_segment. Transactions on an unresolved card land in 'UNKNOWN'.
+        tests:
+          - not_null
+          # Repeated here rather than relied upon from dim_cards: a bad join
+          # could invent a value the dimension never had.
+          - accepted_values:
+              arguments:
+                values: ['VISA', 'MASTERCARD', 'AMEX', 'DISCOVER', 'UNKNOWN']
+
+      - name: issued_card_count
+        description: >
+          Number of issued cards existing in this segment as of this day —
+          POINT-IN-TIME over dim_cards' SCD2 intervals (registry rule #5), one
+          version per card_id thanks to the dimension's coverage/no-overlap
+          tests. The two seed members ('-1' Unknown, '-2' Not Applicable) are
+          excluded: they are referential-integrity placeholders, not issued
+          cards. Denominator of Chip Adoption Rate. A STOCK — never sum across
+          days (see the model description). 0 is valid and expected in the
+          (UNKNOWN, UNKNOWN) bucket, which normally holds only sentinel
+          transactions.
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+
+      - name: active_card_count_90d
+        description: >
+          Distinct cards in this segment with at least one transaction in
+          (date_key - 89, date_key] — the Active Card definition of business
+          spec section 4. Counted on the NATURAL key card_id (resolved from
+          fact_transactions.card_key via dim_cards), because a card whose SCD2
+          attributes change mid-window carries two card_keys but is still one
+          card. Transactions on an unresolved card are excluded from this count
+          (no card identity to count) while still counting towards the
+          transaction counts below. This is the SECOND home of the Active Card
+          metric — the primary home is fact_customer_activity_daily, which
+          breaks it down by CUSTOMER segment instead; the two are held together
+          by a mandatory cross-check singular test (spec section 9), the
+          condition under which the registry's "exactly one home" rule allows
+          this exception at all.
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+          # Every card active on day D necessarily has a dim_cards version in
+          # effect on D (coverage runs to 9999), so it is also counted as
+          # issued in the same segment. The (UNKNOWN, UNKNOWN) bucket is
+          # excluded because sentinel transactions produce transaction counts
+          # with no issued cards behind them (spec section 6).
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: "<= issued_card_count"
+              config:
+                where: "not (chip_segment = 'UNKNOWN' and card_brand = 'UNKNOWN')"
+
+      - name: transaction_count_90d
+        description: >
+          Count of transactions in (date_key - 89, date_key] made by cards of
+          this segment, sentinel-card transactions included (they land in the
+          UNKNOWN bucket). Denominator of Transaction Success Rate by card type.
+          Never sum across days — consecutive windows overlap by 89 days.
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+
+      - name: successful_transaction_count_90d
+        description: >
+          Transactions in the same window with is_error = false. Numerator of
+          Transaction Success Rate (business spec section 4). Compute the rate
+          downstream as sum(successful_transaction_count_90d) /
+          sum(transaction_count_90d) at whatever level is being viewed — the
+          rate is deliberately not stored.
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+          # Section 9 "Success/fail additivity", Critical: the two parts must
+          # account for the whole window by construction.
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: "+ failed_transaction_count_90d = transaction_count_90d"
+
+      - name: failed_transaction_count_90d
+        description: >
+          Transactions in the same window carrying any error code at all
+          (business spec Decision #6 — no severity distinction).
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+
+      - name: cards_reissued_0_count
+        description: >
+          Issued cards in this segment with num_card_issue = 0 — never
+          reissued. Part of the reissue distribution ("how frequently are cards
+          reissued", business spec section 3). Bucket boundaries 0 / 1 / 2+ are
+          hardcoded, not dbt vars: moving them changes what the columns MEAN and
+          has to go through the spec, unlike rpt_merchant_error_daily's tunable
+          threshold. A STOCK — never sum across days.
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+          # Section 9 "Reissue bucket consistency", Critical. Less-than-or-equal
+          # rather than equal: a card with a NULL num_card_issue falls in no
+          # bucket, and the gap is exactly those cards.
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: "+ cards_reissued_1_count + cards_reissued_2plus_count <= issued_card_count"
+
+      - name: cards_reissued_1_count
+        description: >
+          Issued cards in this segment reissued exactly once. A STOCK — never
+          sum across days.
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+
+      - name: cards_reissued_2plus_count
+        description: >
+          Issued cards in this segment reissued two or more times. A STOCK —
+          never sum across days.
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+
+      - name: total_card_reissue_count
+        description: >
+          Sum of num_card_issue over the issued cards of this segment, NULL
+          counted as 0. Stored as a sum so BI can compute "average reissues" as
+          sum(total_card_reissue_count) / sum(cards_reissued_*) at whatever
+          level is being viewed — the average is deliberately not stored
+          (registry rule #1), and storing only the average would also throw away
+          the distribution the bucket columns carry. A STOCK — never sum across
+          days.
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+
+      - name: window_day_count
+        description: >
+          How many days of history the _90d columns of this row actually cover:
+          datediff(date_key, greatest(date_key - 89, first transaction day)) + 1.
+          Equal to 90 on every row except the first 89 days of history, where
+          the window is truncated. A row below 90 is a short window — it affects
+          only the _90d columns, never the issued side, and such rows must not
+          be compared against full-window rows. The complementary half of the
+          check ("= 90 for every date_key at or after history start + 89 days")
+          lives in the singular test
+          tests/rpt_card_portfolio_window_completeness.sql, which an
+          accepted_range cannot express.
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 90

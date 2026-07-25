@@ -69,11 +69,80 @@ resource "aws_iam_policy" "emr_ecr_access" {
           "ecr:BatchGetImage",
           "ecr:GetDownloadUrlForLayer"
         ]
-        # GetAuthorizationToken does not support resource-level permissions
+        # NOTE (least privilege): ecr:GetAuthorizationToken requires Resource = "*".
+        # ecr:BatchGetImage and ecr:GetDownloadUrlForLayer are included in this
+        # statement and therefore also receive wildcard access. For production,
+        # split them into a separate statement scoped to the required ECR repository ARN(s).
         Resource = "*"
       }
     ]
   })
+}
+
+resource "aws_iam_policy" "emr_glue_catalog_access" {
+  name        = "EMRServerlessGlueCatalogAccessDev"
+  description = "Allow EMR Serverless to use Glue Catalog for Gold Iceberg tables"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "glue:GetCatalog",
+          "glue:GetDatabase",
+          "glue:GetDatabases",
+          "glue:CreateDatabase",
+          "glue:UpdateDatabase",
+          "glue:GetTable",
+          "glue:GetTables",
+          "glue:CreateTable",
+          "glue:UpdateTable",
+          "glue:DeleteTable",
+          "glue:GetPartition",
+          "glue:GetPartitions",
+          "glue:CreatePartition",
+          "glue:UpdatePartition",
+          "glue:DeletePartition",
+          "glue:BatchCreatePartition",
+          "glue:BatchDeletePartition",
+          "glue:BatchGetPartition"
+        ]
+        Resource = [
+          "arn:aws:glue:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:catalog",
+          "arn:aws:glue:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:database/${aws_glue_catalog_database.gold.name}",
+          "arn:aws:glue:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:database/${aws_glue_catalog_database.gold_staging.name}",
+          "arn:aws:glue:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${aws_glue_catalog_database.gold.name}/*",
+          "arn:aws:glue:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${aws_glue_catalog_database.gold_staging.name}/*"
+        ]
+      }
+    ]
+  })
+}
+
+resource "aws_iam_policy" "emr_session" {
+  name = "EMRServerlessSessionLevelAccess"
+  description = "Allow get session / endpoint of EMR interactive session"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "emr-serverless:GetSession",
+          "emr-serverless:GetSessionEndpoint",
+          "emr-serverless:TerminateSession",
+          "emr-serverless:GetResourceDashboard"
+        ]
+        # NOTE (least privilege): this grants the session actions against every
+        # resource supported by those actions. Scope to application/session ARN(s)
+        # or add supported conditions before using this policy outside dev.
+        Resource = "*"
+      }
+    ]
+  })
+  
 }
 
 resource "aws_iam_role_policy_attachment" "emr_s3_access" {
@@ -84,6 +153,11 @@ resource "aws_iam_role_policy_attachment" "emr_s3_access" {
 resource "aws_iam_role_policy_attachment" "emr_ecr_access" {
   role       = aws_iam_role.emr_execution_role.name
   policy_arn = aws_iam_policy.emr_ecr_access.arn
+}
+
+resource "aws_iam_role_policy_attachment" "emr_glue_catalog_access" {
+  role       = aws_iam_role.emr_execution_role.name
+  policy_arn = aws_iam_policy.emr_glue_catalog_access.arn
 }
 
 # ====================================
@@ -128,6 +202,9 @@ resource "aws_iam_policy" "emr_job_submission" {
           "emr-serverless:ListJobRuns",
           "emr-serverless:GetApplication",
         ]
+        # NOTE (least privilege): this permits the listed actions for every EMR
+        # Serverless resource. Scope to this environment's application/job-run
+        # ARN(s) where the relevant action supports resource-level permissions.
         Resource = "*"
       },
       {

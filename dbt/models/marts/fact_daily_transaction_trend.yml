@@ -1,0 +1,201 @@
+version: 1
+
+# TODO(security): spec (docs/facts/daily_transaction_trend_fact.md section 10)
+# classifies every column as NSA — the grain is merchant/category/day, so no
+# individual is identifiable — but leaves the retention/purge policy
+# unassigned, and this project hasn't migrated to Lake Formation yet, so no
+# column-level policy is enforced here.
+
+# TODO(observability): "Count reconciliation", "Amount reconciliation" and
+# "Unknown MCC share" (section 9) are implemented as the singular tests
+# tests/fact_daily_transaction_trend_count_reconciliation.sql,
+# tests/fact_daily_transaction_trend_amount_reconciliation.sql and
+# tests/fact_daily_transaction_trend_unknown_mcc_share.sql, all scoped to only
+# the batch day (the partition insert_overwrite last touched) rather than full
+# history — cheaper per run, matches this model's own recompute scope, but
+# relies on fact_transactions rows being immutable once written (no
+# late-arriving correction handling yet, Open Question #1). Section 9 asks for
+# an alert on the Unknown-MCC-share breach; this project has no alert channel
+# (transactions_fact.md Open Question #9), so it runs at severity warn.
+
+models:
+  - name: fact_daily_transaction_trend
+    description: >
+      Daily transaction trend fact (spec:
+      docs/facts/daily_transaction_trend_fact.md). Aggregate fact, grain is one
+      row per (date_key, mcc, merchant_id) — one merchant's transactions in one
+      category on one day. Fact-of-fact, sourced only from
+      gold.fact_transactions. Loaded via insert_overwrite partitioned by
+      date_key: full history on first run/full-refresh, then only the day of
+      batch_logical_date() on incremental runs — that macro means the DATA day,
+      so a T+1 run must pass --vars '{batch_logical_date: <data day>}' rather
+      than rely on its current_date() default.
+
+      AGGREGATION RULES for consumers (spec section 5.1):
+      (1) error_rate is deliberately not stored — a ratio isn't additive, so
+      averaging it over a roll-up is wrong; always compute
+      failed_transaction_count / transaction_count from the two sums, which is
+      correct at any level.
+      (2) unique_cards / unique_customers are valid ONLY at this grain and must
+      never be summed. Unique counts at category level (across merchants) or
+      across multiple days have to be computed from fact_transactions.
+      Everything else in this table is additive.
+      (3) Rolling up to merchant level MUST aggregate across every mcc row of
+      that merchant, including the '-1' bucket (docs/metrics/metrics_layer.md
+      section 3, rule #6). One merchant can appear on several rows of the same
+      day because mcc is part of the grain, and '-1' rows are that merchant's
+      transactions too — they just didn't resolve to a category. Dropping either
+      one leaves the denominator short and inflates the error rate. Rule (2)
+      still stands: this roll-up is valid for the count and amount columns only,
+      never for unique_cards / unique_customers.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - date_key
+              - mcc
+              - merchant_id
+
+    columns:
+      - name: date_key
+        description: >
+          Transaction day (yyyyMMdd, int), carried straight from
+          fact_transactions.date_key. FK to gold.dim_dates.date_key, and the
+          partition key of this table.
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_dates')
+                field: date_key
+
+      - name: mcc
+        description: >
+          FK to gold.dim_merchant.mcc. The Unknown bucket ('-1') is KEPT as a
+          normal data row here, unlike fact_user_monthly_snapshot which drops
+          its unresolved key: volume and errors of transactions whose category
+          didn't resolve are still information, and keeping them is what makes
+          the reconciliation tests tie back to fact_transactions exactly (spec
+          Decision Log 2026-07-23, section 6.2). '-1' is a seeded member of
+          dim_merchant, so the relationships test passes naturally.
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_merchant')
+                field: mcc
+
+      - name: merchant_id
+        description: >
+          Merchant's business key, carried as a degenerate dimension — no
+          merchant-grain dimension exists yet (transactions_fact.md Open
+          Question #7), only the category-level dim_merchant. mcc stays in the
+          grain alongside it because the source doesn't guarantee one merchant
+          maps to one category (spec section 3). Consequence for anyone grouping
+          by this column alone: a merchant that sells across several categories
+          has several rows on the same day, so a merchant-level metric has to sum
+          them all — the '-1' bucket included — before dividing. See aggregation
+          rule (3) in the model description above.
+        tests:
+          - not_null
+
+      - name: transaction_count
+        description: >
+          Transactions this merchant took in this category on this day, all
+          rows included (sentinel keys are not filtered out). Denominator of
+          the error rate consumers compute.
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+
+      - name: total_spend_amount
+        description: >
+          Money the customers spent, reported as a positive number
+          (abs(transaction_amount) where transaction_amount < 0). 0.00 when
+          none. Primary measure for the Marketing/Segment Manager persona.
+          Split from inflow rather than stored as a net amount, same sign
+          convention as fact_user_monthly_snapshot.
+        tests:
+          - not_null
+          # Section 9 rates the non-negative measure checks Warning, not
+          # Critical — unlike the equivalents on fact_user_monthly_snapshot,
+          # which run at the default error severity.
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+              config:
+                severity: warn
+
+      - name: total_inflow_amount
+        description: >
+          Money flowing back to customers (refunds/credits) — sum of
+          transaction_amount where it's positive. 0.00 when none. Net amount is
+          derivable as total_inflow_amount - total_spend_amount.
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+              config:
+                severity: warn
+
+      - name: successful_transaction_count
+        description: >
+          Transactions where is_error = false. Since is_error is not_null on
+          fact_transactions, this and failed_transaction_count always sum back
+          to transaction_count — enforced below (section 9 "Success/failed
+          consistency", Critical).
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+              config:
+                severity: warn
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: "+ failed_transaction_count = transaction_count"
+
+      - name: failed_transaction_count
+        description: >
+          Transactions where is_error = true. Matches the business spec's Error
+          Rate definition (any transaction carrying an error code, business
+          spec section 4) — numerator of the error rate consumers compute.
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+              config:
+                severity: warn
+
+      - name: unique_cards
+        description: >
+          Distinct cards transacting with this merchant/category on this day.
+          Excludes card_key = '-1' (unresolved) — not a real card, same
+          convention as fact_user_monthly_snapshot.distinct_card_count. NOT
+          ADDITIVE: valid only at this grain, never sum it across merchants or
+          days — compute those from fact_transactions instead (spec section
+          5.1).
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+              config:
+                severity: warn
+
+      - name: unique_customers
+        description: >
+          Distinct customers transacting with this merchant/category on this
+          day. Excludes customer_key = '-1' (unresolved). NOT ADDITIVE — same
+          rule as unique_cards.
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+              config:
+                severity: warn

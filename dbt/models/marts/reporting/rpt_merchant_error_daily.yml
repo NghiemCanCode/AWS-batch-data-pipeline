@@ -1,0 +1,361 @@
+version: 1
+
+# TODO(security): spec (docs/metrics/merchant_error_daily_report.md section 10)
+# classifies every column NSA — the grain is merchant x day, so no individual is
+# identifiable and nothing here carries customer PII or card data. This project
+# hasn't migrated to Lake Formation yet, so no column-level policy is enforced
+# anyway (same gap as the sibling models), and no retention/purge policy is
+# assigned at project level.
+#
+# Business caveat rather than a technical one: this table puts the label
+# "abnormal" on real merchants. Given the evidence constraint in the model
+# description, its output must NOT be used to terminate a partnership without a
+# separate investigation — it is shortlist input, exactly as business spec
+# Decision #22 framed it.
+
+# TODO(observability): the four checks of section 9 that a column-level test
+# cannot express live as singular tests in dbt/tests/ — the reconciliation
+# against fact_transactions, "Baseline uniform per day", the "= 30 outside the
+# first 29 days" half of Window completeness, and the flagged-count operating
+# band. The first three are Critical (fail + halt); the band check runs at
+# severity warn because the project has no alert channel yet
+# (transactions_fact.md Open Question #9), same treatment as the trend fact's
+# "Unknown MCC share". The batch-day-scoped ones rely on fact_transactions rows
+# being immutable once written (no late-arriving correction handling yet).
+
+models:
+  - name: rpt_merchant_error_daily
+    description: >
+      Merchant error reporting model (spec:
+      docs/metrics/merchant_error_daily_report.md). Materializes the definition
+      of Abnormal Error Rate (merchant) from business spec section 4 — a
+      merchant whose error rate over the trailing 30 days exceeds 4.0%, among
+      merchants with at least 50 transactions in that window — so BI reads one
+      table instead of re-deriving the formula. This is the only metric in
+      section 4 that consumers currently have to compute themselves. Answers
+      success criterion 6 directly and feeds Dashboard A, where a high error
+      rate marks a poor cashback partner candidate (Decision #3).
+
+      Grain is one row per (date_key, merchant_id): the trailing-30-day error
+      state of one merchant as of the END of that day. The window is
+      (date_key - 29, date_key] — 30 calendar days, current day included, the
+      same convention as the 90-day windows of the sibling reporting models.
+      merchant_id is a degenerate dimension; there is no merchant dimension
+      (Decision #21), so merchants appear as bare IDs, which is why primary_mcc
+      is carried along.
+
+      THIS IS A SHORTLIST FILTER, NOT A VERDICT (calibration doc section 4,
+      mandatory caveat). At the volume floor (n = 50) a merchant needs only 3
+      failures to cross 4% against an expectation of 0.8, and the 95% confidence
+      interval around a rate measured there is roughly +/- 6 percentage points.
+      Always read transaction_count_30d next to the rate, and rank by
+      excess_failed_transactions_30d rather than by error_rate_30d.
+
+      THE VOLUME FLOOR IS PART OF THIS TABLE'S SCOPE, not an optional filter:
+      only merchants above var('abnormal_error_min_transaction_count') get a
+      row, roughly 165 of ~10,433 merchants per day. Consequences: (a) this
+      table is NOT a source for measuring the merchant portfolio baseline or the
+      volume distribution — 98.4% of merchants are excluded by design, so
+      measure those from fact_daily_transaction_trend; (b) "merchant X is not in
+      the table" is ambiguous — X may be clean, or X may be too small, and
+      telling the two apart means going back to the trend fact; (c) a merchant
+      with no transactions on day D still gets a row if its (D - 29, D] window
+      clears the floor, and drops out only after 30 silent days. Note that
+      portfolio_error_rate_30d is computed BEFORE the floor, over every
+      merchant, so the baseline shown here is the real one.
+
+      A ratio IS stored here (error_rate_30d), deliberately unlike
+      fact_daily_transaction_trend where Decision #15 forbids it. That table is
+      meant to be rolled up, so a rate stored at its grain would get averaged;
+      this one is the FINAL CONSUMPTION grain — the rate at merchant x 30-day
+      window IS the metric, and not storing it would leave every consumer
+      dividing by hand, which is what the reporting layer exists to end. Same
+      reasoning, opposite conclusion to rpt_card_portfolio.
+
+      Loaded via insert_overwrite partitioned by date_key, from
+      gold.fact_daily_transaction_trend as the only measure source. Each day's
+      partition depends on exactly 30 days of the trend fact, so it recomputes
+      independently and reruns are idempotent. batch_logical_date() means the
+      DATA day, so a T+1 run must pass --vars '{batch_logical_date: <data day>}'
+      rather than rely on its current_date() default. Never pass 2036-01-01:
+      dim_dates ends 2035-12-31, so that day resolves to nothing and the run
+      writes zero rows in silence while the reconciliation check still passes
+      with 0 = 0.
+
+      AGGREGATION RULES for consumers (spec section 5.1, mandatory):
+      (1) error_rate_30d and portfolio_error_rate_30d are RATIOS — never sum
+      them, never average them. They are only correct at this exact grain. For
+      an error rate at category / weekly / portfolio level, recompute it from
+      the two count columns at that level (registry rule #1).
+      (2) NEVER sum any _30d column across multiple date_key values. Two
+      consecutive days' windows overlap by 29 days, so adding them counts the
+      same transaction up to 30 times (registry rule #7). Read _30d columns at
+      ONE date_key; for totals over an arbitrary period, sum
+      fact_daily_transaction_trend instead.
+      (3) primary_mcc IS NOT A DIMENSION TO GROUP BY. It is an approximate label
+      for a merchant that may be multi-category (distinct_mcc_count > 1);
+      grouping by it and summing assigns all of that merchant's transactions to
+      a single category — inflating that category and emptying the others
+      (registry rule #8). Category analysis belongs in
+      fact_daily_transaction_trend, where mcc is part of the real grain.
+      (4) Do NOT compare rows with window_day_count < 30 against full-window
+      rows.
+      (5) Ranking by error_rate_30d pushes the weakest evidence to the top
+      (calibration section 5.1). Order by excess_failed_transactions_30d.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - date_key
+              - merchant_id
+
+    columns:
+      - name: date_key
+        description: >
+          The day whose end-of-day state this row describes (yyyyMMdd, int),
+          taken from the dim_dates spine. FK to gold.dim_dates.date_key, and the
+          partition key of this table.
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_dates')
+                field: date_key
+
+      - name: merchant_id
+        description: >
+          The merchant, as a DEGENERATE DIMENSION — this project has no merchant
+          dimension (Decision #21), so a merchant is identified by its raw ID
+          with no name attached. Inherited from
+          fact_daily_transaction_trend.merchant_id, aggregated across ALL of
+          that merchant's mcc values (see primary_mcc).
+        tests:
+          - not_null
+
+      - name: primary_mcc
+        description: >
+          The merchant's busiest mcc WITHIN THE WINDOW — the one with the
+          highest rolling transaction_count, ties broken by the smallest mcc as
+          a string so the result is deterministic. Carried so a shortlist of
+          bare merchant IDs can be read without joining back to the trend fact
+          for "what does this merchant sell". FK to gold.dim_merchant.mcc; '-1'
+          is a VALID value, not an error — it means most of the merchant's
+          transactions in the window never resolved to a category, and that
+          bucket is deliberately kept (spec section 6).
+
+          NOT A DIMENSION TO GROUP BY — see rule (3) in the model description.
+          The column exists despite that risk because removing it would just
+          make consumers invent their own label, which is worse.
+        tests:
+          - not_null
+          # Repeated from the trend fact rather than relied upon: a bad argmax
+          # could surface a value the dimension never had.
+          - relationships:
+              arguments:
+                to: ref('dim_merchant')
+                field: mcc
+
+      - name: distinct_mcc_count
+        description: >
+          How many mcc values the merchant had at least one transaction under
+          during the window. Tells the reader how approximate primary_mcc is:
+          1 means it is exact, greater than 1 means a multi-category merchant
+          carrying a single label. At least 1 by construction — a merchant with
+          no transactions at all in the window cannot clear the volume floor.
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+
+      - name: window_day_count
+        description: >
+          How many calendar days of history the _30d columns of this row
+          actually cover: datediff(date_key, greatest(date_key - 29, first day
+          in the trend fact)) + 1. Equal to 30 on every row except the first 29
+          days of history, where the window is truncated. The rate on a short
+          window is still correct over the days that exist, but such rows are
+          NOT comparable with full-window rows. The complementary half of the
+          check ("= 30 for every date_key at or after history start + 29 days")
+          lives in the singular test
+          tests/rpt_merchant_error_daily_window_completeness.sql, which an
+          accepted_range cannot express.
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 30
+
+      - name: transaction_count_30d
+        description: >
+          Total transactions of this merchant in (date_key - 29, date_key],
+          summed across ALL of its mcc values INCLUDING the '-1' bucket
+          (registry rule #6). Denominator of Error Rate, and the column to read
+          next to the rate when judging how strong the evidence is. Missing
+          another mcc row of the same merchant, or dropping '-1', would
+          understate this denominator and flag an innocent merchant — the most
+          dangerous fault this model can have, which is why the reconciliation
+          test recomputes it from fact_transactions rather than from the trend
+          fact. Never sum across days.
+        tests:
+          - not_null
+          # Section 9 "Volume floor enforced", Critical: the floor is part of
+          # this table's scope (see the model description), not a filter a
+          # consumer may undo, so it must hold structurally on every row.
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= applied_min_transaction_count"
+
+      - name: failed_transaction_count_30d
+        description: >
+          Transactions in the same window carrying ANY error code at all — no
+          severity distinction (business spec section 4, Decision #6). Numerator
+          of Error Rate. Never sum across days.
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+
+      - name: error_rate_30d
+        description: >
+          failed_transaction_count_30d / transaction_count_30d — the merchant's
+          Error Rate over the window, i.e. the metric itself. A RATIO: never
+          sum, never average, and only meaningful at this grain (rule (1) in the
+          model description). Cannot be null: the denominator is at or above the
+          volume floor by construction. Do NOT rank by this column — see
+          excess_failed_transactions_30d.
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+          # Section 9 "Rate consistency", Critical. Tolerance rather than strict
+          # equality because the stored value is rounded to decimal(9,6), so it
+          # can differ from the exact quotient by up to 5e-7.
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: "- failed_transaction_count_30d / transaction_count_30d between -0.000001 and 0.000001"
+
+      - name: portfolio_error_rate_30d
+        description: >
+          Total failures divided by total transactions of ALL merchants over the
+          same window — the portfolio baseline of that window, and the mark the
+          4.0% threshold was calibrated against (2.49x a baseline of 1.609%).
+          Computed BEFORE the volume floor is applied, so it is the real
+          baseline and not the baseline of the qualified group; computing it
+          after the floor would raise it artificially and shrink every excess
+          systematically. Constant across all rows of one date_key, which the
+          singular test rpt_merchant_error_daily_baseline_uniform.sql asserts.
+          A RATIO — never sum, never average.
+
+          Known limitation (spec Open Question #1): the baseline moves with the
+          window, so if the whole portfolio degrades at once, excess shrinks and
+          this table goes quiet exactly when it should speak.
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+
+      - name: expected_failed_transactions_30d
+        description: >
+          transaction_count_30d * portfolio_error_rate_30d — how many failures
+          this merchant would have had if it were merely as bad as the
+          portfolio average. Stored rounded to 2 decimals so that
+          excess_failed_transactions_30d, which is derived from this stored
+          value, ties out exactly.
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+          # Section 9 "Excess consistency" (first half), Critical. Tolerance of
+          # one cent because the stored value is rounded to decimal(12,2).
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: "- transaction_count_30d * portfolio_error_rate_30d between -0.01 and 0.01"
+
+      - name: excess_failed_transactions_30d
+        description: >
+          failed_transaction_count_30d - expected_failed_transactions_30d: the
+          absolute number of failures above what the portfolio baseline
+          predicts. THE COLUMN TO ORDER BY. Ranking by error_rate_30d instead
+          puts the weakest evidence on top — calibration section 5 measured
+          exactly that, with merchants of n = 51-105 occupying the head of the
+          list. Sorted by this column, a merchant with 485 transactions and 20
+          failures outranks one with 51 transactions and 3 failures, which is
+          the correct order of evidence. Chosen over a Wilson lower bound
+          because the Marketing persona can explain it in one sentence ("12
+          failures more than the baseline"). Can be NEGATIVE — a qualified
+          merchant performing better than the baseline. Never sum across days.
+        tests:
+          - not_null
+          # Section 9 "Excess consistency" (second half), Critical. Exact
+          # equality, not a tolerance: the model computes this by subtracting
+          # the already-rounded expected_failed_transactions_30d.
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: "= failed_transaction_count_30d - expected_failed_transactions_30d"
+
+      - name: total_spend_amount_30d
+        description: >
+          Customer spend at this merchant over the window, reported as a
+          POSITIVE number (same sign convention as the trend fact). Present so a
+          reader can tell "bad but big" from "bad but small" — two different
+          partnership decisions, and gross value is one of the three acceptance
+          criteria in calibration section 3. Inflow (refunds) is deliberately
+          not carried: it answers none of this table's questions. Never sum
+          across days.
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+
+      - name: applied_error_rate_threshold
+        description: >
+          The value of var('abnormal_error_rate_threshold') at the time this row
+          was built (currently 0.0400). Carried onto every row because the
+          parameter has already changed once — 5% to 4.0% after calibration
+          (Decision #24) — so historical data must be able to say which
+          parameter produced it instead of making the reader dig through git.
+          Changing the var does NOT rewrite history: existing rows keep the
+          value they were built with, and applying a new parameter to the whole
+          history requires a --full-refresh. That is deliberate, so one
+          re-calibration cannot silently rewrite the past.
+        tests:
+          - not_null
+
+      - name: applied_min_transaction_count
+        description: >
+          The value of var('abnormal_error_min_transaction_count') at the time
+          this row was built (currently 50). Every row satisfies
+          transaction_count_30d >= this value by construction. Same rationale
+          and same --full-refresh caveat as applied_error_rate_threshold.
+        tests:
+          - not_null
+
+      - name: is_abnormal_error_rate
+        description: >
+          The Abnormal Error Rate flag of business spec section 4:
+          error_rate_30d > applied_error_rate_threshold. The volume-floor half of
+          that definition is already in this table's scope (only qualified
+          merchants have rows), so this flag carries only the threshold half.
+          Around 12 merchants per day are expected to be flagged, and the
+          operating band of 10-50 is watched by a warn-severity singular test.
+
+          Known and accepted limitation (Decision #22): a static threshold does
+          NOT detect a merchant degrading from 5% to 9% — it is flagged at both
+          levels. Detecting "recently got worse" would need a column comparing
+          the merchant against ITSELF, not a different threshold.
+        tests:
+          - not_null
+          # Section 9 "Flag consistency", Critical. Exact: both operands are
+          # stored columns of this same row.
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: "= (error_rate_30d > applied_error_rate_threshold)"

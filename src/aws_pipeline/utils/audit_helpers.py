@@ -8,6 +8,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+# TODO(schema-control): Legacy Bronze/Silver helper. Do not reintroduce this in
+# Silver->Gold. It silently repairs contract failures by inserting NULLs and
+# try_casting bad types; Gold should use explicit builder casts plus a strict
+# AWAP schema-contract audit gate before publish.
 def schema_enforcing(df: DataFrame, schema: StructType) -> DataFrame:
     select_cols = []
 
@@ -44,4 +48,48 @@ def add_audit_columns(df: DataFrame, batch_logical_date: str) -> DataFrame:
         .withColumn("_updated_at", now)
         .withColumn("_batch_logical_date", F.lit(batch_logical_date))
         .withColumn("_is_deleted", F.lit(False))
+    )
+
+
+"""
+Apply Audit-Write-Audit-Publish pattern
+SLA: Dashboard refresh about 5 minutes
+"""
+
+# Audit class
+from dataclasses import dataclass
+from typing import Optional
+
+
+@dataclass
+class AuditResult:
+    check_name: str
+    check_group: str
+    severity: str # -- CRITICAL | WARNING --
+    status: str # -- PASSED | FAILED
+    message: str
+    expected: Optional[str] = None
+    actual: Optional[str] = None
+
+
+def audit_pass(name:str, group: str, severity: str = "CRITICAL") -> AuditResult:
+    return AuditResult(
+        check_name=name,
+        check_group=group,
+        severity=severity,
+        status="PASSED",
+        message="OK"
+    )
+
+
+def audit_fail(name: str, group: str, message: str, expected: Optional[str] = None,
+               actual: Optional[str] = None, severity: str = "CRITICAL"):
+    return AuditResult(
+        check_name = name,
+        check_group = group,
+        severity = severity,
+        status = "FAILED",
+        message=message,
+        expected=expected,
+        actual=actual
     )

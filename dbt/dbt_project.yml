@@ -1,0 +1,75 @@
+name: 'aws_pipeline'
+version: '1.0.0'
+config-version: 2
+
+# Must match a profile name in ~/.dbt/profiles.yml (dbt-spark, connecting to
+# the EMR Thrift server; not committed since it holds connection details).
+profile: 'aws_pipeline'
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+analysis-paths: ["analyses"]
+
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+vars:
+  # Start date covers the earliest transaction in silver (2010-01-01). It was
+  # 2015-01-01 until 2026-07-24, which silently dropped every 2010-2014
+  # transaction from fact_transactions — dim_dates has no Unknown member, so
+  # fact_transactions filters out rows whose date_key doesn't resolve. Keep the
+  # us_holidays seed's range in sync when changing this:
+  #   poetry run python scripts/gold-dbt/generate_holidays_seed.py --start-year 2010 --end-year 2035
+  dim_date_start_date: '2010-01-01'
+  dim_date_end_date: '2035-12-31'
+
+  # Tham số của metric Abnormal Error Rate (merchant), calibrate 2026-07-24
+  # (docs/metrics/abnormal_error_rate_calibration.md §6, business spec Decision
+  # #24). Ngưỡng từng là 5% trước khi calibrate.
+  #
+  # Đọc bởi rpt_merchant_error_daily, và carry ra hai cột applied_* trên mỗi
+  # dòng: đổi giá trị ở đây KHÔNG tự sửa lịch sử — dòng cũ giữ nguyên applied_*
+  # của lần build ra chúng. Muốn áp tham số mới cho toàn lịch sử phải
+  # --full-refresh; đó là chủ ý, để một lần re-calibrate không âm thầm viết lại
+  # quá khứ.
+  abnormal_error_rate_threshold: 0.04
+  abnormal_error_min_transaction_count: 50
+
+models:
+  aws_pipeline:
+    staging:
+      +materialized: table
+      +file_format: iceberg
+      +schema: gold_staging
+    marts:
+      +materialized: table
+      +file_format: iceberg
+      # marts/reporting/ holds models that encode metric definitions
+      # (customer_activity_daily_fact.md Decision Log 2026-07-23). It needs no
+      # block of its own: it inherits +file_format here, its schema comes from
+      # target.schema via the generate_schema_name override, and the models
+      # there override +materialized per-model like every other incremental
+      # fact.
+
+# Seeds need the same iceberg file_format as the models: without it dbt-spark
+# falls back to a Hive-managed parquet table, which has no location under the
+# Glue catalog here (only the Iceberg catalog has a warehouse path configured),
+# failing with "StorageDescriptor#InputFormat cannot be null".
+# us_holidays is a static reference input consumed by dim_dates, so it lands in
+# gold_staging alongside the stg_* models and snapshots rather than in the gold
+# mart schema.
+#
+# DO NOT "clean up" the backslashes in seeds/us_holidays.csv (New Year\'s Day).
+# dbt-spark interpolates seed values straight into `insert into ... values`
+# without escaping quotes, so a bare apostrophe closes the SQL string literal
+# and the seed dies with PARSE_SYNTAX_ERROR. The backslash is a deliberate
+# workaround — Spark parses \' inside a string literal as a literal apostrophe,
+# so the stored value is correct.
+seeds:
+  aws_pipeline:
+    +file_format: iceberg
+    +schema: gold_staging

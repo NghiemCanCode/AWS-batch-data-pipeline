@@ -1,0 +1,130 @@
+version: 1
+
+# TODO(security): spec (docs/facts/user_monthly_snapshot_fact.md section 10)
+# leaves customer_key's PII level and the financial columns' retention/purge
+# policy unassigned (Open Question #3, #6), and this project hasn't migrated
+# to Lake Formation yet, so no column-level policy is enforced here.
+
+# TODO(observability): "Transaction count reconciliation" / "Amount
+# reconciliation" (section 9) are implemented as the singular tests
+# tests/fact_user_monthly_snapshot_transaction_count_reconciliation.sql and
+# tests/fact_user_monthly_snapshot_amount_reconciliation.sql, but scoped to
+# only the current batch month (the month insert_overwrite last touched),
+# not full history — cheaper per run, matches this model's own recompute
+# scope, but relies on fact_transactions rows being immutable once written
+# (no late-arriving correction handling yet, Open Question #1).
+
+models:
+  - name: fact_user_monthly_snapshot
+    description: >
+      User monthly snapshot fact (spec:
+      docs/facts/user_monthly_snapshot_fact.md). Periodic snapshot fact,
+      grain is one row per (month_end_date_key, customer_key) — customer
+      transaction behavior aggregated across all their cards for the month.
+      Fact-of-fact, sourced only from gold.fact_transactions. Loaded via
+      insert_overwrite partitioned by month_end_date_key: full history on
+      first run/full-refresh, then only the month containing
+      batch_logical_date() (macro, dbt var defaulting to current_date())
+      on incremental runs.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - month_end_date_key
+              - customer_key
+    columns:
+      - name: month_end_date_key
+        description: >
+          Last day of the snapshot month (yyyyMMdd, int), derived from
+          fact_transactions.date_key via last_day(). FK to
+          gold.dim_dates.date_key.
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_dates')
+                field: date_key
+
+      - name: customer_key
+        description: >
+          FK to gold.dim_customers.customer_key. Resolved directly from
+          fact_transactions.customer_key; rows where it's the Unknown
+          sentinel ('-1') are excluded before aggregation rather than kept
+          as a bucket (spec Decision Log 2026-07-23, section 6.2/8.1).
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_key
+
+      - name: transaction_count
+        description: Total transactions (across all cards) the customer made in the month.
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+
+      - name: distinct_card_count
+        description: >
+          Number of distinct cards the customer transacted with in the
+          month. Excludes card_key = '-1' (unresolved) for the same reason
+          customer_key = '-1' rows are excluded — not a real card.
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+
+      - name: total_income_amount
+        description: Total money in (transaction_amount > 0) for the month. 0.00 when none.
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+
+      - name: total_outcome_amount
+        description: >
+          Total money out for the month, reported as a positive number
+          (abs(transaction_amount) where transaction_amount < 0). 0.00 when none.
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+
+      - name: average_daily_total_income_amount
+        description: >
+          total_income_amount divided by the full number of days in the
+          month (not days elapsed so far) — same convention as legacy for a
+          partial/still-open month (spec section 5.1, Open Question #4).
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+
+      - name: average_daily_total_outcome_amount
+        description: total_outcome_amount divided by the full number of days in the month.
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+
+      - name: successful_transaction_count
+        description: >
+          Transactions in the month where is_error = false — replaces
+          legacy's trans_error_type_key == 0 check, since fact_transactions
+          (dbt) only has the boolean is_error flag (spec Decision Log
+          2026-07-23).
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: "<= transaction_count"
