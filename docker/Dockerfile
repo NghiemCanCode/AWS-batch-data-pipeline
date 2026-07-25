@@ -1,4 +1,4 @@
-FROM --platform=linux/amd64 public.ecr.aws/emr-serverless/spark/emr-7.12.0:latest
+FROM --platform=linux/amd64 public.ecr.aws/emr-serverless/spark/emr-7.13.0:latest
 
 USER root
 

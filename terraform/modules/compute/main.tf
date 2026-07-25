@@ -1,7 +1,7 @@
 resource "aws_emrserverless_application" "emr_serverless_app" {
   name          = var.application_name
   release_label = var.release_label
-  type          = var.application_type
+  type          = "spark"
 
   maximum_capacity {
     cpu    = "12 vCPU"
@@ -21,4 +21,10 @@ resource "aws_emrserverless_application" "emr_serverless_app" {
       log_uri = "s3://${var.s3_artifacts_bucket}/logs/"
     }
   }
+
+  interactive_configuration {
+    livy_endpoint_enabled = var.is_endpoint
+    studio_enabled = var.is_studio_enabled
+  }
+
 }

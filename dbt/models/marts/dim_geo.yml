@@ -1,0 +1,43 @@
+version: 1
+
+# TODO(security): spec (docs/dimensions/geomentrics_dimension.md section 10) leaves PII
+# level and masking/retention rules unassigned for city/state/zip, and this project hasn't
+# migrated to Lake Formation yet, so no column-level policy is enforced here.
+
+models:
+  - name: dim_geo
+    description: >
+      Conformed location dimension (SCD Type 1, no history). Grain is one row per
+      distinct (city, state, zip). Sourced from finance_silver.silver_transactions
+      (merchant location) unioned with finance_silver.silver_users (customer
+      location). Includes Unknown (-1) and Not Applicable (-2) member rows for
+      referential integrity from fact tables.
+    columns:
+      - name: location_key
+        description: >
+          Surrogate key, SHA-256 hash of city + state + zip (spec section 6.1).
+          '-1' and '-2' for the Unknown/Not Applicable member rows.
+        tests:
+          - unique
+          - not_null
+
+      - name: city
+        description: >
+          Location city. Sourced from silver_transactions.merchant_city or
+          silver_users.city. 'ONLINE' is an expected legitimate value for
+          online transactions.
+        tests:
+          - not_null
+
+      - name: state
+        description: Location state. Sourced from silver_transactions.merchant_state or silver_users.state.
+        tests:
+          - not_null
+
+      - name: zip
+        description: >
+          Location zip code. Sourced from silver_transactions.zip; defaults to
+          'UNKNOWN' when missing, and always 'UNKNOWN' for rows sourced from
+          silver_users since that table doesn't enrich zip yet (spec section 5.1).
+        tests:
+          - not_null

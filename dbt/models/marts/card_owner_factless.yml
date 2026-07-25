@@ -1,0 +1,63 @@
+version: 1
+
+# TODO(security): spec (docs/helpers/card_owner_factless.md section 10)
+# classifies both columns as NSA — they are md5 surrogate keys, not PII in
+# themselves — but leaves the retention/purge policy unassigned, and this
+# project hasn't migrated to Lake Formation yet, so no column-level policy is
+# enforced here.
+
+# TODO(observability): the two FK checks in section 9 ("customer_key tồn tại
+# trong dim_customers", "card_key tồn tại trong dim_cards") are implemented as
+# the singular tests tests/card_owner_factless_customer_exists_in_dim.sql and
+# tests/card_owner_factless_card_exists_in_dim.sql rather than as generic
+# relationships tests here: section 9 requires the parent side to be filtered to
+# is_current = true, which the generic test cannot express.
+
+# KNOWN LIMITATION (spec section 6.3, Decision Log #4, Open Question #2): a card
+# changing owner is out of scope. snapshot_cards.check_cols is
+# ['has_chip', 'has_a_cvv', 'expires_month', 'expires_year', 'num_card_issue'] —
+# customer_id is not tracked, so dim_cards never opens a new version when the
+# source changes a card's owner, and this table would keep reporting the old
+# pairing. Revisit once real data shows whether ownership transfers occur.
+
+models:
+  - name: card_owner_factless
+    description: >
+      Card ownership factless fact (spec:
+      docs/helpers/card_owner_factless.md). Grain is one row per
+      (customer_key, card_key) pair where both dimension versions are current —
+      it records that an ownership relationship exists, and carries no measure.
+      Answers "which customer owns this card" and "which cards does this
+      customer own". Full refresh every run (materialized: table, inherited from
+      the marts config): the table is derived wholly from the current state of
+      dim_cards / dim_customers, so it is a current-state snapshot with no time
+      dimension of its own and no SCD2 history — re-running it simply
+      recomputes today's picture. Cards whose customer_id doesn't resolve are
+      dropped by the inner join instead of mapped to an Unknown member (section
+      5.1, Decision Log #7), and the seeded '-1'/'-2' special members of both
+      dimensions are excluded so they can't form phantom pairs (section 6.2).
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - customer_key
+              - card_key
+
+    columns:
+      - name: customer_key
+        description: >
+          FK to gold.dim_customers.customer_key, resolved at is_current = true.
+          The customer who owns the card, at the customer's current version.
+          Part of the natural key, which doubles as the primary key — this
+          bridge has no surrogate key of its own because nothing points a FK at
+          it (section 6.1).
+        tests:
+          - not_null
+
+      - name: card_key
+        description: >
+          FK to gold.dim_cards.card_key, resolved at is_current = true. The card
+          being owned, at the card's current version. Part of the natural key
+          (see customer_key).
+        tests:
+          - not_null

@@ -3,7 +3,7 @@ module "data_lake" {
   bucket_name      = "${var.data_lake_bucket_name}-dev"
   versioning_state = "Enabled"
   bucket_tags      = { environment = "dev" }
-  folder_path      = ["bronze/", "silver/", "gold/", "quarantine/"]
+  folder_path      = ["bronze/", "silver/", "gold/", "gold/iceberg/", "quarantine/"]
 }
 
 module "code_bucket" {

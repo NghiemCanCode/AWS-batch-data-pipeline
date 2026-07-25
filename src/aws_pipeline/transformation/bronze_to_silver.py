@@ -272,9 +272,9 @@ def transform_users(df: DataFrame) -> DataFrame:
         .withColumn("per_capita_income", clean_currency_col("per_capita_income"))
         .withColumn("yearly_income", clean_currency_col("yearly_income"))
         .withColumn("total_debt", clean_currency_col("total_debt"))
-        .withColumn("credit_score", clean_num_col("credit_score", num_range=[1, 100]))
+        .withColumn("credit_score", clean_num_col("credit_score", num_range=[300, 850]))
         .withColumn(
-            "num_credit_cards", clean_num_col("num_credit_cards", num_range=[1, 100])
+            "num_credit_cards", clean_num_col("num_credit_cards", num_range=[0, 100])
         )
     )
 

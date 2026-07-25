@@ -1,0 +1,7 @@
+region                = "ap-southeast-1"
+emr_app_name          = "finance-transaction"
+emr_release_label     = "emr-7.13.0"
+data_lake_bucket_name = "finance-transaction-datalake-dev"
+code_bucket_name      = "finance-transaction-codebase-dev"
+is_endpoint = "true"
+is_studio_enabled = "true"

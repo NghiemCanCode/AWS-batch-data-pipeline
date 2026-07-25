@@ -1,0 +1,28 @@
+version: 1
+
+# TODO(security): spec (docs/dimensions/merchant_categories_dimension.md section 10) leaves
+# PII level and masking/retention rules unassigned for this dimension, and this project
+# hasn't migrated to Lake Formation yet, so no column-level policy is enforced here.
+
+models:
+  - name: dim_merchant
+    description: >
+      Merchant category (MCC) lookup dimension (Type 1, no history, no surrogate key per
+      spec section 6.1). Grain is one row per merchant category code. Sourced from
+      finance_silver.silver_mcc. Includes Unknown (-1) and Not Applicable (-2) member rows
+      for referential integrity from fact_transaction.
+    columns:
+      - name: mcc
+        description: >
+          Natural key and primary key: merchant category code (silver_mcc.mcc_code).
+          '-1' and '-2' for the Unknown/Not Applicable member rows.
+        tests:
+          - unique
+          - not_null
+
+      - name: merchant_category_name
+        description: >
+          Merchant category label. Sourced from silver_mcc.merchant_name; defaults to
+          'UNKNOWN' when missing or blank.
+        tests:
+          - not_null

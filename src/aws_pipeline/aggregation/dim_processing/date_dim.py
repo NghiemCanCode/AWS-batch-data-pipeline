@@ -5,31 +5,37 @@ This dimension is generated periodically at specific times and does not run conc
 from datetime import datetime
 
 import holidays
-from pyspark.sql import SparkSession, DataFrame, functions as F
+from pyspark.sql import SparkSession, DataFrame, Column, functions as F
+from pyspark.sql.types import (
+    StructType,
+    StructField,
+    StringType,
+    TimestampNTZType,
+    DecimalType,
+    IntegerType,
+    DateType,
+    BooleanType,
+    ShortType,
+)
 
-from ...utils.audit_helpers import schema_enforcing, add_audit_columns
-from ...schemas.gold_schema import DateDimensionSchema
+DATE_FORMAT = "%Y-%m-%d"
 
-
-def _calculate_week_of_month_col(column_name: str) -> F.col:
-    return F.ceil(F.dayofmonth(F.col(column_name)) / 7).cast("short")
-
-
-def _calculate_is_weekend_col(column_name: str) -> F.col:
+def _calculate_is_weekend_col(column_name: str) -> Column:
     return F.when(
         (F.dayofweek(F.col(column_name)) == 1) | (F.dayofweek(F.col(column_name)) == 7),
         True,
     ).otherwise(False)
 
 
-def _calculate_holy_day(spark, start_year, end_year):
+def _calculate_holiday_df(
+    spark: SparkSession, start_year: int, end_year: int
+) -> DataFrame:
     us_holidays = holidays.US(years=range(start_year, end_year + 1))
     holiday_list = [(date, name) for date, name in us_holidays.items()]
 
-    holiday_df = spark.createDataFrame(
+    return spark.createDataFrame(
         holiday_list, schema=["full_date", "holiday_name"]
-    )
-    return holiday_df
+    ).withColumn("full_date", F.to_date(F.col("full_date")))
 
 
 def generate_date_dim(
@@ -37,6 +43,10 @@ def generate_date_dim(
 ) -> DataFrame:
     """
     Generate a date dimension table for a given date range.
+
+    Business rule: date_dimension is a full-refresh reference table. It is not
+    constrained by the 5-minute dashboard SLA, but Gold facts depend on its
+    complete calendar coverage for partition and BI drill-down correctness.
 
     Args:
         start_date: The start date of the date range (YYYY-MM-DD).
@@ -46,44 +56,61 @@ def generate_date_dim(
         A DataFrame containing the date dimension table.
     """
     try:
-        start_date = datetime.strptime(start_date, "%Y-%m-%d")
-        end_date = datetime.strptime(end_date, "%Y-%m-%d")
+        parsed_start_date = datetime.strptime(start_date, DATE_FORMAT)
+        parsed_end_date = datetime.strptime(end_date, DATE_FORMAT)
     except ValueError as e:
         raise ValueError("Invalid date format. Please use YYYY-MM-DD.") from e
 
-    if start_date > end_date:
+    if parsed_start_date > parsed_end_date:
         raise ValueError("start_date must be less than or equal to end_date")
 
-    start_year = start_date.year
-    end_year = end_date.year
+    start_year = parsed_start_date.year
+    end_year = parsed_end_date.year
+    start_date_value = parsed_start_date.strftime(DATE_FORMAT)
+    end_date_value = parsed_end_date.strftime(DATE_FORMAT)
 
-    holiday_df = _calculate_holy_day(spark, start_year, end_year)
+    holiday_df = _calculate_holiday_df(spark, start_year, end_year)
 
     date_dim_df = spark.range(1).select(
         F.explode(
             F.sequence(
-                F.to_date(F.lit(start_date), "yyyy-MM-dd"),
-                F.to_date(F.lit(end_date), "yyyy-MM-dd"),
+                F.to_date(F.lit(start_date_value)),
+                F.to_date(F.lit(end_date_value)),
                 F.expr("interval 1 day"),
             )
         ).alias("full_date")
     )
 
-    # TODO:String path vs Arithmetic path with date_key
+    """
+    SQL version of 
+
+    SELECT
+    explode(
+        sequence(
+            to_date('${start_date_value}'),
+            to_date('${end_date_value}'),
+            interval 1 day
+        )
+    ) AS full_date
+    
+    """
 
     date_dim_df = date_dim_df.withColumn(
         "date_key", F.date_format(F.col("full_date"), "yyyyMMdd").cast("int")
     )
 
     date_dim_df = (
-        date_dim_df.withColumn("day_of_week", F.dayofweek(F.col("full_date")))
-        .withColumn("day_of_month", F.dayofmonth(F.col("full_date")))
-        .withColumn("day_of_year", F.dayofyear(F.col("full_date")))
-        .withColumn("week_of_month", _calculate_week_of_month_col("full_date"))
-        .withColumn("week_of_year", F.date_format(F.col("full_date"), "w").cast("short"))
-        .withColumn("month", F.month(F.col("full_date")))
-        .withColumn("quarter", F.quarter(F.col("full_date")))
-        .withColumn("year", F.year(F.col("full_date")))
+        date_dim_df.withColumn(
+            "day_of_week", F.dayofweek(F.col("full_date")).cast("short")
+        )
+        .withColumn("day_of_month", F.dayofmonth(F.col("full_date")).cast("short"))
+        .withColumn("day_of_year", F.dayofyear(F.col("full_date")).cast("short"))
+        .withColumn(
+            "week_of_year", F.date_format(F.col("full_date"), "w").cast("short")
+        )
+        .withColumn("month", F.month(F.col("full_date")).cast("short"))
+        .withColumn("quarter", F.quarter(F.col("full_date")).cast("short"))
+        .withColumn("year", F.year(F.col("full_date")).cast("short"))
         .withColumn("is_weekend", _calculate_is_weekend_col("full_date"))
     )
 
@@ -91,8 +118,5 @@ def generate_date_dim(
     date_dim_df = date_dim_df.withColumn(
         "is_holiday", F.when(F.col("holiday_name").isNotNull(), True).otherwise(False)
     )
-
-    date_dim_df = add_audit_columns(date_dim_df, batch_logical_date)
-    date_dim_df = schema_enforcing(date_dim_df, DateDimensionSchema)
 
     return date_dim_df

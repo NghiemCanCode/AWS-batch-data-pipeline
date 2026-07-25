@@ -1,0 +1,180 @@
+version: 1
+
+# TODO(security): spec (docs/facts/customer_activity_daily_fact.md section 10)
+# classifies customer_id as DI — hashed at source, rule owned by the
+# dim_customers spec and not restated here — and the activity flags/counts as
+# SA, since an activity flag tied to a customer_id allows behavioral inference.
+# This project hasn't migrated to Lake Formation yet, so no column-level policy
+# is enforced here (same gap as the sibling facts).
+
+# TODO(observability): "Spot reconciliation" (section 9) is implemented as the
+# singular test tests/fact_customer_activity_daily_active_reconciliation.sql,
+# scoped to only the batch day (the partition insert_overwrite last touched)
+# rather than full history — cheaper per run and matching this model's own
+# output scope, but it relies on fact_transactions rows being immutable once
+# written (no late-arriving correction handling yet). Section 9 rates the
+# "Customer key resolution" check High with an Alert action; this project has
+# no alert channel (transactions_fact.md Open Question #9), so it runs at
+# severity warn instead.
+
+models:
+  - name: fact_customer_activity_daily
+    description: >
+      Daily customer activity fact (spec:
+      docs/facts/customer_activity_daily_fact.md). Materializes the business
+      definition "Active Customer / Active Card = at least one transaction in
+      the trailing 90 calendar days" (business spec section 4) so BI never
+      re-implements the formula — the single source of truth for the Active
+      Customers KPI of Dashboard B and Issued-vs-Active cards of Dashboard C.
+      First model of the reporting layer (Decision Log 2026-07-23).
+
+      Grain is one row per (date_key, customer_id): every calendar day from a
+      customer's first transaction onward, including days with no activity.
+      The grain is the natural key rather than the SCD2 version, because
+      activity belongs to the customer and not to a dimension version;
+      customer_key is carried as-of end of day so BI still gets point-in-time
+      segments from one plain equality join.
+
+      Fact-of-fact, sourced from gold.fact_transactions, with dim_customers /
+      dim_cards used only to resolve natural keys and dim_dates as the spine.
+      Transactions whose customer_key is the Unknown sentinel ('-1') are
+      dropped entirely, so totals here deliberately do NOT tie back to
+      fact_transactions exactly (spec section 3, Decision Log 2026-07-24).
+
+      Loaded via insert_overwrite partitioned by date_key. The spine ends at
+      the last day with real data on full-refresh, and at batch_logical_date()
+      on incremental runs — that macro means the DATA day, so a T+1 run must
+      pass --vars '{batch_logical_date: <data day>}' rather than rely on its
+      current_date() default.
+
+      AGGREGATION RULES for consumers (spec section 5.1, mandatory):
+      (1) "Active Customers" for a day = count(*) where is_active_90d AT THAT
+      ONE DAY. NEVER sum or average is_active_90d across days — a customer
+      active on 30 consecutive days is one customer, not 30.
+      (2) sum(active_card_count_90d) across CUSTOMERS within one day is valid
+      (a card belongs to one customer); across DAYS it is not. A portfolio-wide
+      distinct card count over an arbitrary window has to be computed from
+      fact_transactions.
+      (3) Customers who have never transacted do not appear at all (Open
+      Question #1), so a denominator like "share of all customers active" must
+      be counted from dim_customers, not from this table.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - date_key
+              - customer_id
+
+    columns:
+      - name: date_key
+        description: >
+          The day whose end-of-day state this row describes (yyyyMMdd, int),
+          taken from the dim_dates spine rather than from a transaction — rows
+          exist for days with no activity too. FK to gold.dim_dates.date_key,
+          and the partition key of this table.
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_dates')
+                field: date_key
+
+      - name: customer_id
+        description: >
+          Customer business/natural key, resolved from
+          fact_transactions.customer_key via dim_customers. Part of the grain:
+          activity is an attribute of the customer, not of an SCD2 version, so
+          a customer whose attributes change mid-window still contributes one
+          row per day (spec Decision Log 2026-07-23).
+        tests:
+          - not_null
+
+      - name: customer_key
+        description: >
+          FK to gold.dim_customers.customer_key — the version in effect at the
+          END of this day, resolved by an as-of join on
+          [effective_from_date, effective_to_date). Carried so BI can reach
+          point-in-time segment attributes with one equality join instead of
+          re-deriving the as-of logic. '-1' would mean as-of resolution failed,
+          which dim_customers' interval coverage/no-overlap tests should make
+          impossible — the warn-severity test below is the tripwire for that
+          (spec section 9 "Customer key resolution").
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_key
+          # Section 9 rates this High with an Alert action, not a halt; with no
+          # alert channel in this project it runs at warn (see the header note).
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: "!= '-1'"
+              config:
+                severity: warn
+
+      - name: is_active_90d
+        description: >
+          True when the customer has at least one transaction in
+          (date_key - 89 days, date_key] — the trailing 90 calendar days,
+          current day included. THE single source of truth for the business
+          spec section 4 Active Customer definition. NOT additive across days
+          (see the model description). Always equals
+          (transaction_count_90d > 0), enforced below (spec section 9
+          "Flag/count consistency", Critical).
+        tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: "= (transaction_count_90d > 0)"
+
+      - name: active_card_count_90d
+        description: >
+          Distinct cards the customer used in the trailing 90-day window,
+          counted on the NATURAL key card_id (via dim_cards) rather than the
+          surrogate card_key: a card whose SCD2 attributes change mid-window
+          carries two card_keys but is still one card (spec Decision Log
+          2026-07-24). Transactions on an unresolved card (card_key = '-1') are
+          excluded from the count while still counting towards
+          transaction_count_90d — so an ACTIVE customer can legitimately show 0
+          here, which spec section 9 records as expected behavior rather than a
+          check. Additive across customers within one day, never across days.
+        tests:
+          - not_null
+          # min_value 0, unlike the sibling facts' distinct counts which start
+          # at 1: this table has a row for every spine day, including days where
+          # the customer transacted with no resolvable card, or not at all.
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+              config:
+                severity: warn
+
+      - name: transaction_count_90d
+        description: >
+          Count of the customer's transactions in the trailing 90-day window,
+          sentinel-card rows included — they are real transactions. Measures
+          activity intensity and drives is_active_90d.
+        tests:
+          - not_null
+          # 0 is valid and expected here: a spine day inside a >90-day gap in
+          # the customer's activity has no transactions in its window.
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+              config:
+                severity: warn
+
+      - name: last_transaction_date_key
+        description: >
+          date_key of the customer's most recent transaction on or before this
+          day, over FULL history rather than limited to the 90-day window —
+          intended for recency/churn analysis (spec section 5.1). Nullable by
+          spec but never null in practice, since the spine starts on the
+          customer's first transaction day. FK to gold.dim_dates.date_key; the
+          relationships test ignores nulls by construction.
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_dates')
+                field: date_key

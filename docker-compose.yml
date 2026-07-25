@@ -1,3 +1,7 @@
+# This docker-compose is deprecated. Now use spark local mode for small test and
+# EMR serverless service for more complex test.
+
+
 services:
   spark-master:
     image: apache/spark:4.1.0-scala2.13-java21-python3-r-ubuntu

@@ -1,0 +1,174 @@
+version: 1
+
+# TODO(security): spec (docs/facts/transactions_fact.md section 10) leaves PII
+# level and masking/retention rules unassigned for every column, and this
+# project hasn't migrated to Lake Formation yet, so no column-level policy is
+# enforced here.
+
+# TODO(observability): fact/source count and amount reconciliation (spec
+# section 9: "Source count reconciliation", "Source amount reconciliation")
+# aren't expressible as a dbt schema test against a single model — they need
+# an external DQ job comparing this table to silver_transactions.
+
+models:
+  - name: fact_transactions
+    description: >
+      Transaction fact (spec: docs/facts/transactions_fact.md). Grain is one
+      row per transaction_id. Sourced from finance_silver.silver_transactions.
+      Loaded incrementally, merging on transaction_id and filtered by the
+      timestamp watermark, since silver_transactions has no _updated_at
+      column and transactions are immutable events — merge keeps the PK
+      uniqueness test valid across reruns (section 8.1, Decision Log
+      2026-07-23).
+    columns:
+      - name: transaction_id
+        description: Business/natural key of the transaction (silver_transactions.transaction_id).
+        tests:
+          - unique
+          - not_null
+
+      - name: timestamp
+        description: >
+          UTC timestamp the transaction occurred. Source of date_key/time_key,
+          and the incremental-load watermark in place of the spec's undocumented
+          _updated_at column.
+        tests:
+          - not_null
+
+      - name: date_key
+        description: >
+          FK to gold.dim_date.date_key, derived as yyyyMMdd from timestamp.
+          Rows that don't resolve against dim_date are dropped (spec: "skip
+          record + log warning"; only the skip half is implemented, no
+          logging/alerting hook exists in this project yet).
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_dates')
+                field: date_key
+
+      - name: time_key
+        description: >
+          FK to gold.dim_times.time_key, derived as HHmmss from timestamp and
+          resolved via a left join to dim_times. Rows that don't resolve are
+          dropped (spec section 5.1/7: "skip record + log warning"; only the
+          skip half is implemented, no logging/alerting hook exists in this
+          project yet — same gap as date_key).
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_times')
+                field: time_key
+
+      - name: customer_key
+        description: >
+          Point-in-time FK to gold.dim_customers.customer_key, resolved via
+          client_id AS-OF range joined on the version validity interval
+          (timestamp >= effective_from_date AND < effective_to_date) — each
+          transaction attaches to the customer version valid at its timestamp
+          (spec section 7, Decision Log 2026-07-23; replaces the former
+          is_current rule). Maps to the Unknown member key '-1' when
+          unresolved (the "+ log" half of the spec's null handling isn't
+          implemented — no logging/alerting hook exists in this project yet).
+          The section 9 "Fact join determinism" check has no dedicated test —
+          it's enforced indirectly by the unique transaction_id test (blocks
+          fan-out) plus the dimension-side SCD2 interval no-overlap/coverage
+          singular tests in dbt/tests/ (block gaps / false '-1').
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_key
+
+      - name: card_key
+        description: >
+          Point-in-time FK to gold.dim_cards.card_key, resolved via card_id
+          AS-OF range joined on the version validity interval (timestamp >=
+          effective_from_date AND < effective_to_date) — same rule as
+          customer_key (spec section 7, Decision Log 2026-07-23). Maps to the
+          Unknown member key '-1' when unresolved; determinism enforced
+          indirectly the same way as customer_key.
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_cards')
+                field: card_key
+
+      - name: transaction_type
+        description: >
+          Degenerate dimension, normalized from silver_transactions.transaction_channel.
+          No parent dimension.
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['SWIPE TRANSACTION', 'ONLINE TRANSACTION', 'CHIP TRANSACTION', 'UNKNOWN']
+
+      - name: merchant_id
+        description: >
+          Merchant's business key, carried as a degenerate attribute — no
+          merchant_id-level dimension exists yet (only the MCC category-level
+          dim_merchant), per sources.yml.
+
+      - name: merchant_geo_key
+        description: >
+          FK to gold.dim_geo.location_key, resolved by joining merchant
+          city/state/zip to dim_geo (spec section 7). Maps to '-1' when
+          unresolved.
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_geo')
+                field: location_key
+
+      - name: mcc
+        description: >
+          FK to gold.dim_merchant.mcc (natural key, no surrogate). Maps to
+          '-1' when unresolved.
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_merchant')
+                field: mcc
+
+      - name: transaction_amount
+        description: >
+          Transaction amount (silver_transactions.amount). Required by
+          section 9's "Amount completeness" and "Source amount
+          reconciliation" checks. Per Decision Log 2026-07-23 (Open Question
+          #5), negative values are allowed (refunds), so no range constraint
+          is enforced here.
+        tests:
+          - not_null
+
+      - name: is_error
+        description: >
+          Whether the transaction was flagged as erroneous. Spec section 5.1
+          requires a corresponding record in gold.trans_error_bridge when
+          true — enforced by the singular test
+          tests/fact_transactions_is_error_has_bridge_record.sql (the reverse
+          direction, "bridge row must exist in fact", is enforced by
+          tests/trans_error_bridge_transaction_exists_in_fact.sql per
+          transaction_errors_bridge.md section 9).
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [true, false]
+                quote: false
+
+      - name: customer_age_at_transaction
+        description: >
+          Customer's age at transaction time, year(timestamp) - birth_year
+          taken from the same as-of dim_customers version resolved for
+          customer_key (spec section 5.1, v.0.0.4). NULL when the customer
+          doesn't resolve (customer_key '-1') or birth_year is missing.
+          Materializes the retirement-age segment (>= 65, business spec
+          section 4) — consumers derive the flag from this column instead of
+          recomputing it.
+        tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 120
