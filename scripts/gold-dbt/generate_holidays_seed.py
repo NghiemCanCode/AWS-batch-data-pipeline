@@ -16,7 +16,7 @@ substitution is ever fixed upstream, this escaping should be removed and
 the seed regenerated.
 
 Usage:
-    poetry run python scripts/generate_holidays_seed.py --start-year 2015 --end-year 2035
+    poetry run python scripts/gold-dbt/generate_holidays_seed.py --start-year 2015 --end-year 2035
 """
 
 import argparse
@@ -25,7 +25,7 @@ from pathlib import Path
 
 import holidays
 
-SEED_PATH = Path(__file__).resolve().parent.parent / "dbt" / "seeds" / "us_holidays.csv"
+SEED_PATH = Path(__file__).resolve().parent.parent.parent / "dbt" / "seeds" / "us_holidays.csv"
 
 
 def main(start_year: int, end_year: int) -> None:

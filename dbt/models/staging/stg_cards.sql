@@ -20,9 +20,8 @@ select
     -- Not implemented yet, same open item as stg_customers.sql's customer_id.
     card_id,
     -- customer_id kept nullable/pass-through: a card can exist in this dimension without
-    -- a resolved owner (spec section 5.1 note). Spec sections 5.1 and 7 disagree on the
-    -- null-handling rule (skip record vs map to Unknown -1) — left unresolved, no
-    -- skip/remap implemented here.
+    -- a resolved owner. Spec v.0.0.2 (sections 5.1/7 + Decision Log) settled the former
+    -- 5.1-vs-7 conflict on NULL passthrough — no skip/remap implemented here.
     client_id as customer_id,
     case
         when upper(trim(card_brand)) in ('VISA', 'MASTERCARD', 'AMEX', 'DISCOVER')

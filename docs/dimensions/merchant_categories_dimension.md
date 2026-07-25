@@ -1,4 +1,4 @@
-# Technical Specification: Merchant Dimension
+# Technical Specification: Merchant Category Dimension
 
 ---
 ## 0. Document Control
@@ -6,16 +6,17 @@
 | Attribute     | Value         | Description                                    |
 | ------------- | ------------- | ---------------------------------------------- |
 | Doc status    |               | <Draft \| In Review \| Approved \| Deprecated> |
-| Doc version   | v.0.0.1       |                                                |
+| Doc version   | v.0.0.2       |                                                |
 | Owner (table) |               |                                                |
 | Author (spec) | NghiemCanCode |                                                |
 | Reviewers     | NghiemCanCode |                                                |
-| Last updated  |               |                                                |
+| Last updated  | 2026-07-24    |                                                |
 ### Changelog
 
-| Version | Date | Author        | Change        |
-| ------- | ---- | ------------- | ------------- |
-| v.0.0.1 |      | NghiemCanCode | Initial draft |
+| Version | Date       | Author        | Change                                                                                                                                                                                          |
+| ------- | ---------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v.0.0.1 |            | NghiemCanCode | Initial draft                                                                                                                                                                                     |
+| v.0.0.2 | 2026-07-24 | NghiemCanCode | Đổi tiêu đề "Merchant Dimension" → "Merchant Category Dimension" cho khớp grain thật (MCC) và khớp business spec §8 sau Decision #21. Nội dung §1/§3 (Type 1, lookup, grain = 1 loại merchant) không đổi. |
 
 ---
 
@@ -35,7 +36,7 @@
 
 | Attribute        | Value             | Description |
 | ---------------- | ----------------- | ----------- |
-| Table name       | gold.dim_merchant |             |
+| Table name       | gold.dim_merchant | Tên bảng vật lý giữ nguyên `dim_merchant` dù grain là merchant **category** — đổi tên sẽ tạo bảng orphan trên Glue và phải sửa mọi `ref()` downstream. Xem Decision Log bên dưới. |
 | Layer            | Gold              |             |
 | Source(s)        | silver.mcc        |             |
 | Load strategy    | Full load         |             |
@@ -178,6 +179,7 @@
 ### Decision Log
 > `Rationale` = lý do đằng sau quyết định (ràng buộc, đánh đổi, yêu cầu business)
 
-| Date | Decision | Rationale | Decided by |
-| ---- | -------- | --------- | ---------- |
-|      |          |           |            |
+| Date       | Decision                                                                                                          | Rationale                                                                                                                                                                                                                                                                                              | Decided by    |
+| ---------- | ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- |
+| 2026-07-24 | Dimension này là **merchant category (MCC)**, không phải merchant. Không xây dimension ở grain `merchant_id`.        | Business spec §8 trước đây ghi "Merchant Dimension (SCD Type 2)" — không khớp source lẫn model đã implement. `silver_transactions` chỉ có `merchant_id` + city/state/zip của chính giao dịch, không có thuộc tính merchant nào biến đổi theo thời gian ⇒ SCD2 sẽ chỉ có đúng 1 version mỗi merchant mãi mãi. Đã sửa business spec (Decision #21). | NghiemCanCode |
+| 2026-07-24 | Giữ tên bảng vật lý `gold.dim_merchant`, chỉ sửa tài liệu.                                                          | Đổi sang `dim_merchant_category` phải sửa `ref()` ở `fact_transactions`, relationships test ở `fact_transactions.yml` và `fact_daily_transaction_trend.yml`, deploy script, đồng thời để lại bảng orphan trên Glue phải drop tay — chi phí không tương xứng với lợi ích đặt tên.                              | NghiemCanCode |

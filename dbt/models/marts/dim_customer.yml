@@ -10,9 +10,15 @@ models:
     description: >
       Customer dimension (SCD Type 2). Grain is one row per customer per version of tracked
       attributes (income_bracket, address_key). Sourced from finance_silver.silver_users.
+      SCD2 interval integrity (no-overlap, coverage, current uniqueness — spec
+      section 9 Critical checks) is enforced by singular tests in dbt/tests/.
     columns:
       - name: customer_key
-        description: Surrogate key, hash of customer_id + effective_from_date.
+        description: >
+          Surrogate key, hash of customer_id + the snapshot's ORIGINAL
+          dbt_valid_from — not the backdated effective_from_date, so the key
+          stays independent of the version-1 backdate rule (spec section 6.1,
+          v.0.0.3).
         tests:
           - unique
           - not_null
@@ -64,13 +70,14 @@ models:
 
       - name: income_bracket
         description: >
-          Bucketed yearly_income: "Low" (< $60k), "Middle" ($60k-$180k),
-          "High" (> $180k), "Unknown" when yearly_income is missing.
-          SCD2-tracked attribute.
+          Bucketed yearly_income: "LOW" (< $60k), "MIDDLE" ($60k-$180k),
+          "HIGH" (> $180k), "UNKNOWN" when yearly_income is missing.
+          UPPER-cased per the project-wide category convention. SCD2-tracked
+          attribute.
         tests:
           - accepted_values:
               arguments:
-                values: ['Low', 'Middle', 'High', 'Unknown']
+                values: ['LOW', 'MIDDLE', 'HIGH', 'UNKNOWN']
 
       - name: total_debt
         description: >
@@ -89,7 +96,12 @@ models:
         description: Number of credit cards held by the customer, used for fast card-count lookups.
 
       - name: effective_from_date
-        description: UTC timestamp from which this version of the record is valid.
+        description: >
+          UTC timestamp from which this version of the record is valid.
+          Version 1 of each customer_id is backdated to 1900-01-01 so
+          fact_transactions' as-of range join covers transactions predating
+          the first snapshot run (spec section 8.1 step 3, Decision Log
+          v.0.0.3); later versions keep the snapshot's dbt_valid_from.
         tests:
           - not_null
 

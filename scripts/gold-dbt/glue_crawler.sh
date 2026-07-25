@@ -9,7 +9,8 @@ set -euo pipefail
 # ===========================================
 
 # ─── STEP 0: Variables & environment ───────────────
-ROOT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_PATH="$(cd "$SCRIPT_DIR/../.." && pwd)"
 RUNTIME_ENV="$ROOT_PATH/scripts/.env.runtime"
 AWS_REGION="${AWS_REGION:-ap-southeast-1}"
 
@@ -57,7 +58,7 @@ else
   else
     echo "Creating IAM role '$IAM_ROLE_NAME'..."
 
-    POLICIES_DIR="$ROOT_PATH/scripts/policies"
+    POLICIES_DIR="$SCRIPT_DIR/policies"
     rendered_permissions_policy="$(mktemp)"
     trap 'rm -f "$rendered_permissions_policy"' EXIT
 

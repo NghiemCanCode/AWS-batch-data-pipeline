@@ -5,7 +5,7 @@ sources:
     schema: finance_silver
     description: >
       Silver-layer tables in the Glue Data Catalog. Populated by a temporary
-      Glue Crawler (scripts/glue_crawler.sh) over s3://<datalake_bucket>/silver/
+      Glue Crawler (scripts/gold-dbt/glue_crawler.sh) over s3://<datalake_bucket>/silver/
       until the Silver layer migrates to Iceberg — drop/replace this source
       once that migration lands.
     tables:
@@ -62,11 +62,23 @@ sources:
             tests:
               - not_null
 
+          - name: timestamp
+            description: UTC timestamp the transaction occurred, used to derive date_key/time_key.
+
           - name: client_id
             description: Customer's business key (silver_users.user_id).
 
           - name: card_id
             description: Card's business key (silver_cards.card_id).
+
+          - name: amount
+            description: Transaction amount.
+
+          - name: transaction_channel
+            description: Raw channel the transaction was made through (swipe/online/chip).
+
+          - name: merchant_id
+            description: Merchant's business key. No merchant dimension exists yet (only MCC category-level dim_merchant).
 
           - name: merchant_city
             description: Merchant location city, used to build gold.dim_geo.
@@ -76,6 +88,18 @@ sources:
 
           - name: zip
             description: Merchant location zip code, used to build gold.dim_geo.
+
+          - name: mcc
+            description: Merchant category code, FK to gold.dim_merchant.mcc.
+
+          - name: is_error
+            description: Whether the transaction was flagged as erroneous.
+
+          - name: errors
+            description: >
+              Array of error reason strings for this transaction, already
+              normalized at the silver layer. Source of gold.trans_error_bridge
+              (exploded into one row per element).
 
       - name: silver_mcc
         description: Silver-layer MCC (merchant category code) reference table, crawled from the S3 silver/ path.

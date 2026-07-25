@@ -10,10 +10,16 @@ models:
     description: >
       Cards dimension (SCD Type 2). Grain is one row per card per version of tracked
       attributes (has_chip, has_a_cvv, expires_month, expires_year, num_card_issue).
-      Sourced from finance_silver.silver_cards.
+      Sourced from finance_silver.silver_cards. SCD2 interval integrity
+      (no-overlap, coverage, current uniqueness — spec section 9 Critical
+      checks) is enforced by singular tests in dbt/tests/.
     columns:
       - name: card_key
-        description: Surrogate key, hash of card_id + effective_from_date.
+        description: >
+          Surrogate key, hash of card_id + the snapshot's ORIGINAL
+          dbt_valid_from — not the backdated effective_from_date, so the key
+          stays independent of the version-1 backdate rule (spec section 6.1,
+          v.0.0.3).
         tests:
           - unique
           - not_null
@@ -27,8 +33,10 @@ models:
         description: >
           Owning customer's business key (silver_cards.client_id). Nullable — a
           card can be stored in this dimension without a resolved owner (spec
-          section 5.1). Not remapped to the Unknown member; see section 6.2 TODO
-          in dim_cards.sql.
+          section 5.1). Individual rows with an unresolved owner keep customer_id
+          as NULL rather than being remapped to '-1' — distinct from the dimension's
+          own seeded Unknown('-1')/Not Applicable('-2') member rows (section 6.2),
+          which are now present.
         tests:
           - relationships:
               arguments:
@@ -84,7 +92,12 @@ models:
                 min_value: 0
 
       - name: effective_from_date
-        description: UTC timestamp from which this version of the record is valid.
+        description: >
+          UTC timestamp from which this version of the record is valid.
+          Version 1 of each card_id is backdated to 1900-01-01 so
+          fact_transactions' as-of range join covers transactions predating
+          the first snapshot run (spec section 8.1 step 3, Decision Log
+          v.0.0.3); later versions keep the snapshot's dbt_valid_from.
         tests:
           - not_null
 

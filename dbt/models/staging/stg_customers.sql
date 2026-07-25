@@ -31,10 +31,10 @@ select
     end as gender,
     yearly_income,
     case
-        when yearly_income < 60000 then 'Low'
-        when yearly_income <= 180000 then 'Middle'
-        when yearly_income is not null then 'High'
-        else 'Unknown'
+        when yearly_income < 60000 then 'LOW'
+        when yearly_income <= 180000 then 'MIDDLE'
+        when yearly_income is not null then 'HIGH'
+        else 'UNKNOWN'
     end as income_bracket,
     -- city/state passed through raw; dim_customers.sql resolves the real address_key
     -- FK by joining gold.dim_geo instead of self-hashing here.

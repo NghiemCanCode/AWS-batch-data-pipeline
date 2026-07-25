@@ -44,11 +44,11 @@ enriched as (
         {{ time_bucket('time_key', 30) }} as time_bucket_30min,
         {{ time_bucket('time_key', 60) }} as time_bucket_hourly,
         case
-            when time_key between 0 and 59999 then 'Early Night'
-            when time_key between 60000 and 119999 then 'Morning'
-            when time_key between 120000 and 179999 then 'Afternoon'
-            when time_key between 180000 and 219999 then 'Evening'
-            when time_key between 220000 and 235959 then 'Night'
+            when time_key between 0 and 59999 then 'EARLY NIGHT'
+            when time_key between 60000 and 119999 then 'MORNING'
+            when time_key between 120000 and 179999 then 'AFTERNOON'
+            when time_key between 180000 and 219999 then 'EVENING'
+            when time_key between 220000 and 235959 then 'NIGHT'
         end as day_part
     from base
 

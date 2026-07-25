@@ -1,0 +1,50 @@
+version: 1
+
+# TODO(security): spec (docs/helpers/transaction_errors_bridge.md section 10)
+# leaves transaction_id's PII level unassigned, and this project hasn't
+# migrated to Lake Formation yet, so no column-level policy is enforced here.
+
+models:
+  - name: trans_error_bridge
+    description: >
+      Transaction error bridge (spec: docs/helpers/transaction_errors_bridge.md).
+      Grain is one row per (transaction_id, error_reason) — a many-to-many
+      bridge between an errored transaction and its error reason(s), exploded
+      from silver_transactions.errors. Append-only/immutable, filtered by the
+      timestamp watermark. errors is treated as the source of truth over
+      fact_transactions.is_error when they disagree (section 5.1, Decision Log
+      2026-07-23).
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - transaction_id
+              - error_reason
+    columns:
+      - name: transaction_id
+        description: FK to gold.fact_transactions.transaction_id.
+        tests:
+          - not_null
+
+      - name: error_reason
+        description: >
+          One error reason for the transaction, exploded from
+          silver_transactions.errors. UPPER-cased, matching silver's
+          normalization and the project-wide convention that category values
+          are stored UPPER. Values outside the 7-value enum (silver stores them
+          as 'UNKNOWN') are dropped (spec section 6.3, Decision Log 2026-07-23:
+          skip + log warning; only the skip half is implemented, no
+          logging/alerting hook exists in this project yet).
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['INSUFFICIENT BALANCE', 'BAD CVV', 'BAD EXPIRATION', 'TECHNICAL GLITCH', 'BAD CARD NUMBER', 'BAD PIN', 'BAD ZIPCODE']
+
+      - name: timestamp
+        description: >
+          UTC timestamp the transaction occurred (silver_transactions.timestamp).
+          Not part of spec section 5.1's column list — added solely as the
+          incremental-load watermark, mirroring fact_transactions.
+        tests:
+          - not_null

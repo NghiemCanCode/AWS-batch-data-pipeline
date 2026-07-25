@@ -1,7 +1,7 @@
 version: 2
 
 models:
-  - name: dim_time
+  - name: dim_times
     description: >
       Static 24-hour time dimension (one row per second of day, 86,400 rows).
       Generated periodically and independently of the main pipeline runs;
@@ -48,8 +48,10 @@ models:
       - name: time_bucket_hourly_str
         description: Display string of time_bucket_hourly as HH:MM.
       - name: day_part
-        description: Coarse part-of-day label derived from time_key.
+        description: >
+          Coarse part-of-day label derived from time_key. UPPER-cased per the
+          project-wide category convention.
         tests:
           - accepted_values:
               arguments:
-                values: ['Early Night', 'Morning', 'Afternoon', 'Evening', 'Night']
+                values: ['EARLY NIGHT', 'MORNING', 'AFTERNOON', 'EVENING', 'NIGHT']

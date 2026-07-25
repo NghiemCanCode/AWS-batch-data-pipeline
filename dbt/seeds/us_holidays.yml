@@ -4,7 +4,7 @@ seeds:
   - name: us_holidays
     description: >
       US holiday calendar, pre-generated from the `holidays` Python package
-      (see scripts/generate_holidays_seed.py) since dbt SQL cannot replicate
+      (see scripts/gold-dbt/generate_holidays_seed.py) since dbt SQL cannot replicate
       its moving-holiday and observed-date rules. Re-run the script and
       `dbt seed` to extend the covered year range.
     columns:

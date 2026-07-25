@@ -1,7 +1,7 @@
 version: 2
 
 models:
-  - name: dim_date
+  - name: dim_dates
     description: >
       Full-refresh calendar dimension. Not constrained by the 5-minute
       dashboard SLA; Gold facts depend on its complete calendar coverage for

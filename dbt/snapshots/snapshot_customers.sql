@@ -5,8 +5,9 @@
    gold_staging. -#}
 {#- Raw financial fields (yearly_income, total_debt, credit_score, num_credit_cards) are
    passed through but not tracked here, same as retirement_age/gender/birth_year — only
-   the derived income_bracket bucket triggers a new SCD2 version. Spec section 6.4 leaves
-   this undecided; revisit if point-in-time raw-value history is ever required. -#}
+   the derived income_bracket bucket (plus city/state) triggers a new SCD2 version. These
+   raw fields fluctuate too often/noisily to be worth a version each; income_bracket exists
+   specifically to give a stable, bucketed attribute for SCD2 tracking. See spec section 6.4. -#}
 {#- Tracks raw city/state (not the resolved address_key) since address_key is now
    resolved via a join to gold.dim_geo in dim_customers.sql rather than computed here. -#}
 {{
@@ -15,8 +16,7 @@
         file_format='iceberg',
         unique_key='customer_id',
         strategy='check',
-        check_cols=['yearly_income', 'total_debt', 'credit_score', 'income_bracket', 'city', 
-        'state'],
+        check_cols=['income_bracket', 'city', 'state'],
     )
 }}
 
