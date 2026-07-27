@@ -1,0 +1,4 @@
+region                = "ap-southeast-1"
+ressult_bucket_name   =
+data_lake_bucket_name =
+gold_database_name =
