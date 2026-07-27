@@ -7,8 +7,16 @@ The platform runs on a **synthetic** dataset and is a portfolio project. The bus
 ---
 
 ## Architecture
+<p align="center">
+  <img src="assets/architecture.png" alt="Architecture" width="900">
+</p>
 
-![Architecture — Bronze to Silver on EMR Serverless, Silver to Gold with dbt on Iceberg, served to Power BI through Athena](assets/architecture.png)
+<p align="center">
+  <em>
+    Figure 1. Bronze to Silver on EMR Serverless, Silver to Gold with dbt on Iceberg, served to Power BI through Athena.
+  </em>
+</p>
+
 
 | Layer | Engine | Format | Catalog | Purpose |
 |---|---|---|---|---|
@@ -27,13 +35,49 @@ The platform runs on a **synthetic** dataset and is a portfolio project. The bus
 ## Dashboards
 
 ### Dashboard A — Merchant & Category Spending (flagship)
-![Dashboard A — Merchant & Category Spending](assets/dashboard-a-merchant-category.jpg)
+<p align="center">
+  <img
+    src="assets/dashboard-a-merchant-category.jpg"
+    alt="Dashboard A — Merchant & Category Spending"
+    width="900"
+  >
+</p>
+
+<p align="center">
+  <em>
+    Figure 2. Dashboard A — Merchant &amp; Category Spending.
+  </em>
+</p>
 
 ### Dashboard B — Customer Spending by Segment
-![Dashboard B — Customer Spending by Segment](assets/dashboard-b-customer-segment.jpg)
+<p align="center">
+  <img
+    src="assets/dashboard-b-customer-segment.jpg"
+    alt="Dashboard B — Customer Spending by Segment"
+    width="900"
+  >
+</p>
+
+<p align="center">
+  <em>
+    Figure 3. Dashboard B — Customer Spending by Segment.
+  </em>
+</p>
 
 ### Dashboard C — Card Portfolio
-![Dashboard C — Card Portfolio](assets/dashboard-c-card-portfolio.jpg)
+<p align="center">
+  <img
+    src="assets/dashboard-c-card-portfolio.jpg"
+    alt="Dashboard C — Card Portfolio"
+    width="900"
+  >
+</p>
+
+<p align="center">
+  <em>
+    Figure 4. Dashboard C — Card Portfolio.
+  </em>
+</p>
 
 | Dashboard | Question it answers | Reads from |
 |---|---|---|
@@ -218,9 +262,10 @@ Still in the tree, kept for history, **not** the current path:
 - [x] Reconciliation + SCD2 test suite; all Gold models green on dev, incremental branches verified idempotent
 - [x] Terraform-managed infrastructure (remote state, four stacks) + GitHub Actions image build to ECR
 - [x] Athena workgroup for BI consumers
+- [x] Publish the Power BI dataset on Athena (DirectQuery), covering Dashboards A/B/C
 
 **Next**
-- [ ] **Publish the Power BI dataset** on Athena (DirectQuery), covering Dashboards A/B/C
+
 - [ ] **Replace the static source** with a transactional database and a transaction simulator, so incremental/CDC and T+1 get exercised for real — and the SCD2 tests stop passing vacuously
 - [ ] **Migrate Silver to Iceberg**, dropping the temporary Glue Crawler and the `finance_silver` grant with it
 - [ ] **Orchestrate with Airflow** — one task group per dataset, `logical_date`-parameterized for backfill, each layer gated on test success
