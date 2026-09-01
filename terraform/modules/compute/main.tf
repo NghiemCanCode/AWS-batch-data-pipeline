@@ -24,7 +24,7 @@ resource "aws_emrserverless_application" "emr_serverless_app" {
 
   interactive_configuration {
     livy_endpoint_enabled = var.is_endpoint
-    studio_enabled = var.is_studio_enabled
+    studio_enabled        = var.is_studio_enabled
   }
 
 }

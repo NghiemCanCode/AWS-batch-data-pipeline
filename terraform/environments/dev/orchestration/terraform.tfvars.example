@@ -2,7 +2,8 @@ region             = "ap-southeast-1"
 name_prefix        = "finance-transaction"
 availability_zones = ["ap-southeast-1a", "ap-southeast-1b"]
 
-mwaa_environment_name = "finance-transaction-airflow-dev"
+# Base name, WITHOUT the -dev suffix — Terraform appends it (see iam.tf locals).
+mwaa_environment_name = "finance-transaction"
 
 # Check the currently supported MWAA versions before applying:
 #   aws mwaa list-environments  (existing), or the MWAA console "Airflow version" dropdown

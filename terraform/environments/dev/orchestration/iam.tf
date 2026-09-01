@@ -2,9 +2,11 @@ data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
 
 locals {
-  # Single source of truth for the environment name: main.tf feeds this same
-  # value to the module, so the IAM ARNs below can never drift from the real
-  # environment name.
+  # Single source of truth for the environment name. The "-dev" suffix is added
+  # here, the same way every other stack suffixes its resources, and main.tf
+  # passes this local to the module as environment_name — so the IAM ARNs below
+  # cannot drift from the real environment name. var.mwaa_environment_name is
+  # the base name and must NOT already carry the suffix.
   mwaa_name = "${var.mwaa_environment_name}-dev"
 
   # Built as a string instead of referencing the module: the environment needs
@@ -75,10 +77,19 @@ resource "aws_iam_policy" "mwaa_core" {
           "logs:GetLogEvents",
           "logs:GetLogRecord",
           "logs:GetLogGroupFields",
-          "logs:GetQueryResults",
-          "logs:DescribeLogGroups"
+          "logs:GetQueryResults"
         ]
         Resource = local.mwaa_log_group_arn
+      },
+      {
+        Effect = "Allow"
+        Action = ["logs:DescribeLogGroups"]
+        # NOTE (least privilege): logs:DescribeLogGroups does not support
+        # resource-level permissions. Scoping it to the log group ARN makes the
+        # call fail, which silently breaks MWAA's own logging setup - MWAA lists
+        # log groups before it knows their full names. AWS's sample MWAA
+        # execution role policy keeps it in a separate statement for this reason.
+        Resource = "*"
       },
       {
         Effect = "Allow"
@@ -143,7 +154,10 @@ resource "aws_iam_policy" "mwaa_pipeline" {
           "emr-serverless:StartJobRun",
           "emr-serverless:GetJobRun",
           "emr-serverless:CancelJobRun",
-          "emr-serverless:ListJobRuns"
+          "emr-serverless:ListJobRuns",
+          # Cho phep operator cua Airflow sinh link sang Spark UI cua job run.
+          # Thieu quyen nay thi tu Airflow khong mo duoc UI de debug job hong.
+          "emr-serverless:GetDashboardForJobRun"
         ]
         Resource = [
           "arn:aws:emr-serverless:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:/applications/${var.emr_application_id}",

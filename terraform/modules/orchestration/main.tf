@@ -24,10 +24,19 @@ resource "aws_mwaa_environment" "mwaa" {
   airflow_configuration_options = merge(
     var.enable_secrets_manager_backend ? {
       "secrets.backend" = "airflow.providers.amazon.aws.secrets.secrets_manager.SecretsManagerBackend"
-      "secrets.backend_kwargs" = jsonencode({
-        connections_prefix = "${var.secrets_prefix}/connections"
-        variables_prefix   = "${var.secrets_prefix}/variables"
-      })
+      # Without a lookup pattern, EVERY connection and variable lookup calls
+      # Secrets Manager first and only then falls back to the metadata database -
+      # including aws_default, which every EMR task uses. That is one extra API
+      # call and one extra round trip per task. The patterns below restrict which
+      # names are worth asking Secrets Manager about.
+      "secrets.backend_kwargs" = jsonencode(merge(
+        {
+          connections_prefix = "${var.secrets_prefix}/connections"
+          variables_prefix   = "${var.secrets_prefix}/variables"
+        },
+        var.connections_lookup_pattern == null ? {} : { connections_lookup_pattern = var.connections_lookup_pattern },
+        var.variables_lookup_pattern == null ? {} : { variables_lookup_pattern = var.variables_lookup_pattern },
+      ))
     } : {},
     var.airflow_configuration_options
   )

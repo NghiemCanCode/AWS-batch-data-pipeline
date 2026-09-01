@@ -14,7 +14,7 @@ module "network" {
 module "mwaa" {
   source = "../../../modules/orchestration"
 
-  environment_name   = var.mwaa_environment_name
+  environment_name   = local.mwaa_name
   airflow_version    = var.airflow_version
   environment_class  = var.mwaa_environment_class
   execution_role_arn = aws_iam_role.mwaa_execution_role.arn
@@ -34,6 +34,8 @@ module "mwaa" {
 
   enable_secrets_manager_backend = var.enable_secrets_manager_backend
   secrets_prefix                 = var.secrets_prefix
+  connections_lookup_pattern     = var.connections_lookup_pattern
+  variables_lookup_pattern       = var.variables_lookup_pattern
 
   tags = { environment = "dev" }
 }

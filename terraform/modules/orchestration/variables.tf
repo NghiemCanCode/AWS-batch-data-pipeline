@@ -116,6 +116,22 @@ variable "enable_secrets_manager_backend" {
   default     = true
 }
 
+# Only names matching these regexes are looked up in Secrets Manager; everything
+# else goes straight to the metadata database. null means "look up everything",
+# which bills an API call for names that are never stored there - aws_default
+# above all. Set them as soon as the backend is enabled.
+variable "connections_lookup_pattern" {
+  description = "Regex of connection ids to look up in Secrets Manager, e.g. \"^(redshift|snowflake)_\". null disables filtering"
+  type        = string
+  default     = null
+}
+
+variable "variables_lookup_pattern" {
+  description = "Regex of variable keys to look up in Secrets Manager. null disables filtering"
+  type        = string
+  default     = null
+}
+
 variable "secrets_prefix" {
   description = "Secrets Manager path prefix for connections and variables"
   type        = string

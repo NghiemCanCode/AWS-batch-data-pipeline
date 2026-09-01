@@ -120,9 +120,17 @@ resource "aws_iam_policy" "emr_glue_catalog_access" {
   })
 }
 
-resource "aws_iam_policy" "emr_session" {
-  name = "EMRServerlessSessionLevelAccess"
-  description = "Allow get session / endpoint of EMR interactive session"
+# Removed: aws_iam_policy.emr_session ("EMRServerlessSessionLevelAccess").
+# It granted GetSession / GetSessionEndpoint / TerminateSession but was attached to
+# no role, user or group - in Terraform or on AWS - so it granted nobody anything.
+# scripts/gold-dbt/deploy_gold_dbt_dev.sh drives interactive sessions as the human
+# operator's own IAM identity, not through a role this stack manages, so those
+# permissions belong on that identity. Add the policy back only together with an
+# attachment that says who it is for.
+
+resource "aws_iam_policy" "emr_cloudwatch_logs" {
+  name        = "EMRServerlessCloudWatchLogsDev"
+  description = "Allow EMR Serverless job runs to write driver/executor logs to CloudWatch"
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -130,24 +138,29 @@ resource "aws_iam_policy" "emr_session" {
       {
         Effect = "Allow"
         Action = [
-          "emr-serverless:GetSession",
-          "emr-serverless:GetSessionEndpoint",
-          "emr-serverless:TerminateSession",
-          "emr-serverless:GetResourceDashboard"
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+          "logs:DescribeLogStreams"
         ]
-        # NOTE (least privilege): this grants the session actions against every
-        # resource supported by those actions. Scope to application/session ARN(s)
-        # or add supported conditions before using this policy outside dev.
-        Resource = "*"
+        # The trailing ":*" covers the log streams inside the group - EMR creates
+        # one stream per driver/executor. logs:DescribeLogGroups is deliberately
+        # NOT in this statement: it does not support resource-level permissions
+        # and would be denied here (see the same note in the orchestration stack).
+        Resource = "arn:aws:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:log-group:${local.emr_log_group_name}:*"
       }
     ]
   })
-  
 }
 
 resource "aws_iam_role_policy_attachment" "emr_s3_access" {
   role       = aws_iam_role.emr_execution_role.name
   policy_arn = aws_iam_policy.emr_s3_access.arn
+}
+
+resource "aws_iam_role_policy_attachment" "emr_cloudwatch_logs" {
+  role       = aws_iam_role.emr_execution_role.name
+  policy_arn = aws_iam_policy.emr_cloudwatch_logs.arn
 }
 
 resource "aws_iam_role_policy_attachment" "emr_ecr_access" {

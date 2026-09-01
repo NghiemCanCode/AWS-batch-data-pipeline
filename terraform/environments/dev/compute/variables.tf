@@ -36,3 +36,16 @@ variable "is_endpoint" {
 variable "is_studio_enabled" {
   description = "enable emr serverless studio"
 }
+
+# The job's monitoringConfiguration must name this same log group, so the value
+# is exported as an output and read back by the deploy scripts / Airflow DAGs
+# instead of being written out a second time by hand.
+variable "emr_log_group_name" {
+  description = "CloudWatch log group EMR Serverless job runs write to"
+  type        = string
+  default     = ""
+}
+
+locals {
+  emr_log_group_name = var.emr_log_group_name != "" ? var.emr_log_group_name : "/aws/emr-serverless/${var.emr_app_name}-dev"
+}

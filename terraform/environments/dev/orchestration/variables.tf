@@ -30,7 +30,7 @@ variable "single_nat_gateway" {
 # ---------- MWAA ----------
 
 variable "mwaa_environment_name" {
-  description = "Name of the MWAA environment"
+  description = "Name of the MWAA environment (without -dev suffix)"
   type        = string
 }
 
@@ -79,6 +79,21 @@ variable "enable_secrets_manager_backend" {
   description = "Read Airflow connections and variables from Secrets Manager"
   type        = bool
   default     = true
+}
+
+# Turn these on together with enable_secrets_manager_backend. Leaving them null
+# while the backend is on means every lookup - aws_default included - pays a
+# Secrets Manager API call before falling back to the metadata database.
+variable "connections_lookup_pattern" {
+  description = "Regex of connection ids to look up in Secrets Manager, e.g. \"^(redshift|snowflake)_\". null disables filtering"
+  type        = string
+  default     = null
+}
+
+variable "variables_lookup_pattern" {
+  description = "Regex of variable keys to look up in Secrets Manager. null disables filtering"
+  type        = string
+  default     = null
 }
 
 variable "secrets_prefix" {
