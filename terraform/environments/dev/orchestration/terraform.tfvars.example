@@ -1,0 +1,28 @@
+region             = "ap-southeast-1"
+name_prefix        = "finance-transaction"
+availability_zones = ["ap-southeast-1a", "ap-southeast-1b"]
+
+# Base name, WITHOUT the -dev suffix — Terraform appends it (see iam.tf locals).
+mwaa_environment_name = "finance-transaction"
+
+# Check the currently supported MWAA versions before applying:
+#   aws mwaa list-environments  (existing), or the MWAA console "Airflow version" dropdown
+airflow_version = "3.2.1"
+
+mwaa_environment_class = "mw1.small"
+mwaa_min_workers       = 1
+mwaa_max_workers       = 2
+webserver_access_mode  = "PUBLIC_ONLY"
+single_nat_gateway     = true
+
+# From: terraform -chdir=../platform output -raw code_bucket_name
+code_bucket_name      = "finance-transaction-codebase-dev"
+data_lake_bucket_name = "finance-transaction-datalake-dev"
+
+# From: terraform -chdir=../compute output -raw emr_application_id / emr_execution_role_arn
+emr_application_id     = "00fxxxxxxxxxxxxx"
+emr_execution_role_arn = "arn:aws:iam::123456789012:role/EMRExecutionRoleDev"
+
+# Leave unset on the first apply. Fill it from:
+#   terraform -chdir=../platform output -raw mwaa_requirements_s3_object_version
+# requirements_s3_object_version = "3HL4kqCxf3vjVBH40Nrjfkd"

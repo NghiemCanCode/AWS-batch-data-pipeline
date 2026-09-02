@@ -20,13 +20,13 @@ variable "custom_image_uri" {
 }
 
 variable "is_endpoint" {
-  description = ""  
-  type = string
-  default = "false"
+  description = ""
+  type        = string
+  default     = "false"
 }
 
 variable "is_studio_enabled" {
-  description = ""  
-  type = string
-  default = "false"
+  description = ""
+  type        = string
+  default     = "false"
 }
