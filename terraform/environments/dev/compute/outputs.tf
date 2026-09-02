@@ -22,3 +22,8 @@ output "gold_staging_database_name" {
   description = "Glue database for staging gold Iceberg tables."
   value       = aws_glue_catalog_database.gold_staging.name
 }
+
+output "emr_log_group_name" {
+  description = "CloudWatch log group EMR Serverless job runs write to. Feed it into the job's monitoringConfiguration.cloudWatchLoggingConfiguration.logGroupName."
+  value       = local.emr_log_group_name
+}
