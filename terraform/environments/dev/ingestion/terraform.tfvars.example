@@ -1,0 +1,12 @@
+region      = "ap-southeast-1"
+name_prefix = "finance-transaction"
+alert_email = "<your-email>"
+
+# From: terraform -chdir=../platform output -raw data_lake_bucket_name
+data_lake_bucket_name = "finance-transaction-datalake-dev"
+
+# Leave empty on the first apply. Fill in step 8, once each source has sent its peering request.
+cdc_sources = {}
+# cdc_sources = {
+#   core-banking = { peering_id = "pcx-xxxxxxxx", cidr = "10.101.0.0/16" }
+# }
