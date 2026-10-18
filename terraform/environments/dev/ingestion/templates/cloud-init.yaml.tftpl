@@ -1,0 +1,30 @@
+#cloud-config
+write_files:
+  - path: /etc/systemd/system/auto-stop.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Poweroff instance (demo guard)
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/bin/systemctl poweroff
+  - path: /etc/systemd/system/auto-stop.timer
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Auto stop ${auto_stop_after} after boot
+
+      [Timer]
+      OnBootSec=${auto_stop_after}
+      Unit=auto-stop.service
+
+      [Install]
+      WantedBy=timers.target
+runcmd:
+  - systemctl daemon-reload
+  - systemctl enable --now auto-stop.timer
+%{ if disable_ssh ~}
+  # Ubuntu 24.04 = ssh.socket + ssh.service, Amazon Linux 2023 = sshd.service. Disable each one, ignore missing ones.
+  - for u in ssh.socket ssh.service sshd.service; do systemctl disable --now "$u" 2>/dev/null || true; done
+%{ endif ~}
